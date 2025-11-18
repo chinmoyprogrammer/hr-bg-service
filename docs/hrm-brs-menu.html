@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HRM BRS Menu</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 24px; line-height: 1.5; }
+    h1 { margin-bottom: 12px; font-size: 22px; }
+    .note { color: #555; margin-bottom: 16px; font-size: 13px; }
+    ul { list-style: none; padding-left: 0; }
+    li { margin: 4px 0; }
+    .group { margin-top: 12px; }
+    .label { font-weight: 600; }
+    /* Simple indentation for nested lists */
+    ul ul { padding-left: 18px; border-left: 2px solid #eee; margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <h1>HRM BRS Page/Menu Structure</h1>
+  <p class="note">This menu mirrors the HRM BRS sections and features as a navigable hierarchy.</p>
+
+  <ul>
+    <li class="group"><span class="label">Overview</span></li>
+    <li class="group"><span class="label">Executive Summary</span></li>
+    <li class="group"><span class="label">Objective</span></li>
+    <li class="group"><span class="label">References</span></li>
+    <li class="group"><span class="label">Document Version History</span></li>
+
+    <li class="group"><span class="label">Introduction</span>
+      <ul>
+        <li>Purpose</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Business Requirements</span></li>
+    <li class="group"><span class="label">Scope of work</span></li>
+
+    <li class="group"><span class="label">Login/Sign in (Authentication)</span></li>
+    <li class="group"><span class="label">User Role Management</span></li>
+    <li class="group"><span class="label">UI Behaviour Feature</span></li>
+
+    <li class="group"><span class="label">Administrative Configuration</span>
+      <ul>
+        <li>Company Setup</li>
+        <li>Dropdown Option Configuration</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">HR & Administrative Configuration</span>
+      <ul>
+        <li>Branch Setup</li>
+        <li>Department Setup</li>
+        <li>Section Setup</li>
+        <li>Sub-Section Setup</li>
+        <li>Payroll Management
+          <ul>
+            <li>Salary Grade Setup</li>
+          </ul>
+        </li>
+        <li>Designation Level Setup</li>
+        <li>Designation Setup</li>
+        <li>Address Configuration
+          <ul>
+            <li>Division Management</li>
+            <li>District Management</li>
+            <li>Upazila/Thana Management</li>
+          </ul>
+        </li>
+        <li>Educational System Configuration
+          <ul>
+            <li>Exam/Degree Title Setup</li>
+            <li>Education Board/University Setup</li>
+            <li>Group/Subject Setup</li>
+          </ul>
+        </li>
+        <li>Approver Hierarchy</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Employee Management</span>
+      <ul>
+        <li>Add Employee</li>
+        <li>Probationary Employee Data
+          <ul>
+            <li>Step-1: Basic Information</li>
+            <li>Step-2: Official Information</li>
+            <li>Step-3: Address Information</li>
+            <li>Step-4: Educational Information</li>
+            <li>Step-5: Experience History</li>
+            <li>Step-6: Training &amp; Professional Certification</li>
+            <li>Step-7: Skill(s)</li>
+            <li>Step-8: Family &amp; Nominee Details</li>
+            <li>Step-9: References</li>
+            <li>Step-10: Transportation Vehicle Support</li>
+          </ul>
+        </li>
+        <li>Observation Employee Data
+          <ul>
+            <li>Step-1: Basic Information</li>
+            <li>Step-2: Official Information</li>
+            <li>Step-3: Address Information</li>
+            <li>Step-4: References</li>
+            <li>Step-5: File Upload System</li>
+          </ul>
+        </li>
+        <li>Contractual Employee Data
+          <ul>
+            <li>Step-1: Basic Information</li>
+            <li>Step-2: Official Information</li>
+            <li>Step-3: Address Information</li>
+            <li>Step-4: References</li>
+            <li>Step-5: File Upload System</li>
+          </ul>
+        </li>
+        <li>Manage Employee</li>
+        <li>Manage Contractual Employee</li>
+        <li>Employee Agreement Management</li>
+        <li>Employee Service History (Lifecycle)</li>
+        <li>Employee Accommodation Facility Manage</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Employee Performance Management</span>
+      <ul>
+        <li>Employee Status Review and Upgradation</li>
+        <li>Employee Job Description</li>
+        <li>Employee KPI</li>
+        <li>Employee Evaluation &amp; Appraisal Process</li>
+        <li>Increment &amp; Promotion Management</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Attendance Management</span>
+      <ul>
+        <li>Holiday Configuration</li>
+        <li>Manage Special Holiday Duty</li>
+        <li>Shift Configuration</li>
+        <li>Shift &amp; Roster Assignment</li>
+        <li>Manage Attendance (Manual)</li>
+        <li>Manage Attendance Correction</li>
+        <li>Manage Late Attendance Reconsideration</li>
+        <li>Visit/Outdoor Work</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Leave Management</span>
+      <ul>
+        <li>Leave Setup</li>
+        <li>Leave Head Setup</li>
+        <li>Leave Policy Configuration</li>
+        <li>Leave Assignment</li>
+        <li>Leave Application
+          <ul>
+            <li>Apply for Leave Form</li>
+          </ul>
+        </li>
+        <li>Early Out System</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Employee Logistics Management</span>
+      <ul>
+        <li>Requisition Management</li>
+        <li>Employee Logistics
+          <ul>
+            <li>Step 1: Item &amp; Inventory Management</li>
+            <li>Step 2: Employee Assignment &amp; Returns</li>
+            <li>Step 3: Reporting</li>
+            <li>Step 4: Employee Requisition Process (New Section)</li>
+            <li>Step 5: Notifications (New Section)</li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">OT/SP allowance Management</span>
+      <ul>
+        <li>Manage OT/SP Allowance</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Corporate SIM Management</span>
+      <ul>
+        <li>SIM Card Manage</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Provident Fund Management</span>
+      <ul>
+        <li>Provident Fund Policy Config.</li>
+        <li>Manage Provident Fund</li>
+        <li>Manage PF Settlement, Loan &amp; withdrawal</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Medical Treatment Record Management</span>
+      <ul>
+        <li>Manage Medical Treatment Record</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Grievance and Disciplinary Action Management</span>
+      <ul>
+        <li>Employee Relations &amp; Compliance</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Meal Facility Management</span>
+      <ul>
+        <li>Manage Meal System</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Notice Management</span>
+      <ul>
+        <li>Manage Notice</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Training/Meeting Management</span>
+      <ul>
+        <li>Manage Training/Meeting</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Payroll Management</span>
+      <ul>
+        <li>Salary Structure Setup</li>
+        <li>Salary Sheet Generation</li>
+        <li>Payslip Generation &amp; Disbursement</li>
+        <li>Salary Reconciliation (Payroll Adjustment &amp; Request Handling)</li>
+        <li>Salary Arrear Process</li>
+        <li>Bonus Policy Configuration</li>
+        <li>Bonus Generation &amp; Disbursement</li>
+        <li>Manage Salary Contribution</li>
+        <li>TA/DA Management</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Loan Management</span>
+      <ul>
+        <li>Salary Advance &amp; Long Term Loan</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Employee Letter Management</span>
+      <ul>
+        <li>Employee Letter</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Employee Transfer Management</span>
+      <ul>
+        <li>Transfer Request Register</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Employee offboarding</span>
+      <ul>
+        <li>Employee Separation Management</li>
+        <li>Employee Clearance Management</li>
+        <li>Employee Exit Interview</li>
+        <li>Final Settlement Management</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Non-Functional Requirements (NFR)</span>
+      <ul>
+        <li>Performance</li>
+        <li>Scalability</li>
+        <li>Security</li>
+        <li>Usability</li>
+      </ul>
+    </li>
+
+    <li class="group"><span class="label">Reporting Scope (Future)</span></li>
+    <li class="group"><span class="label">Acceptance Criteria</span></li>
+  </ul>
+
+  <hr />
+  <p class="note">If any grouping or label needs adjustment, let me know and I will refine it.</p>
+</body>
+</html>

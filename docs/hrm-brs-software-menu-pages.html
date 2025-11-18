@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HRM Software Menu with Page Names</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    .sub { color: #666; font-size: 13px; margin: 0 0 16px; }
+    .menu { max-width: 950px; }
+    .group { border: 1px solid #e5e7eb; border-radius: 8px; margin: 10px 0; overflow: hidden; }
+    .group > button { width: 100%; text-align: left; padding: 10px 12px; background: #f9fafb; border: none; cursor: pointer; font-weight: 600; }
+    .group > button:hover { background: #f3f4f6; }
+    .group > button .count { color: #666; font-weight: 400; margin-left: 8px; }
+    .items { display: none; padding: 8px 14px 14px; }
+    .items.open { display: block; }
+    ul { list-style: none; padding-left: 0; margin: 6px 0 0; }
+    li { margin: 4px 0; }
+    .nested { padding-left: 18px; border-left: 2px solid #e5e7eb; margin-left: 6px; }
+    .note { color: #666; font-size: 12px; margin-top: 18px; }
+    .page { color: #0a7; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>HRM Software Menu (with Suggested Page Names)</h1>
+  <p class="sub">Page names are placed in square brackets and closely follow the BRS wording.</p>
+
+  <div class="menu" id="menu">
+    <!-- Authentication & Roles -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Authentication & Roles<span class="count">(2)</span></button>
+      <div class="items">
+        <ul>
+          <li>Login / Sign In [<span class="page">Login Page</span>]</li>
+          <li>User Role Management [<span class="page">Role Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- UI Behaviour -->
+    <section class="group">
+      <button type="button" aria-expanded="false">UI Behaviour Configuration<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>UI Behaviour Feature [<span class="page">UI Behaviour Settings Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Administrative Configuration -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Administrative Configuration<span class="count">(2)</span></button>
+      <div class="items">
+        <ul>
+          <li>Company Setup [<span class="page">Company Setup Page</span>]</li>
+          <li>Dropdown Option Configuration [<span class="page">Dropdown Configuration Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- HR & Administrative Configuration -->
+    <section class="group">
+      <button type="button" aria-expanded="false">HR & Administrative Configuration<span class="count">(11)</span></button>
+      <div class="items">
+        <ul>
+          <li>Branch Setup [<span class="page">Branch Setup Page</span>]</li>
+          <li>Department Setup [<span class="page">Department Setup Page</span>]</li>
+          <li>Section Setup [<span class="page">Section Setup Page</span>]</li>
+          <li>Sub-Section Setup [<span class="page">Sub-Section Setup Page</span>]</li>
+          <li>Designation Level Setup [<span class="page">Designation Level Setup Page</span>]</li>
+          <li>Designation Setup [<span class="page">Designation Setup Page</span>]</li>
+          <li>Payroll Management (Salary Grade Setup) [<span class="page">Salary Grade Setup Page</span>]</li>
+          <li>Address Configuration
+            <ul class="nested">
+              <li>Division Management [<span class="page">Division Management Page</span>]</li>
+              <li>District Management [<span class="page">District Management Page</span>]</li>
+              <li>Upazila / Thana Management [<span class="page">Upazila/Thana Management Page</span>]</li>
+            </ul>
+          </li>
+          <li>Educational System Configuration
+            <ul class="nested">
+              <li>Exam / Degree Title Setup [<span class="page">Exam/Degree Title Setup Page</span>]</li>
+              <li>Education Board / University Setup [<span class="page">Education Board/University Setup Page</span>]</li>
+              <li>Group / Subject Setup [<span class="page">Group/Subject Setup Page</span>]</li>
+            </ul>
+          </li>
+          <li>Approver Hierarchy [<span class="page">Approver Hierarchy Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Management<span class="count">(8)</span></button>
+      <div class="items">
+        <ul>
+          <li>Add Employee [<span class="page">Add Employee Wizard</span>]
+            <ul class="nested">
+              <li>Step-1: Basic Information [<span class="page">Basic Information Step</span>]</li>
+              <li>Step-2: Official Information [<span class="page">Official Information Step</span>]</li>
+              <li>Step-3: Address Information [<span class="page">Address Information Step</span>]</li>
+              <li>Step-4: Educational Information [<span class="page">Educational Information Step</span>]</li>
+              <li>Step-5: Experience History [<span class="page">Experience History Step</span>]</li>
+              <li>Step-6: Training &amp; Professional Certification [<span class="page">Training &amp; Certification Step</span>]</li>
+              <li>Step-7: Skill(s) [<span class="page">Skills Step</span>]</li>
+              <li>Step-8: Family &amp; Nominee Details [<span class="page">Family &amp; Nominee Step</span>]</li>
+              <li>Step-9: References [<span class="page">References Step</span>]</li>
+              <li>Step-10: Transportation Vehicle Support [<span class="page">Transportation Support Step</span>]</li>
+            </ul>
+          </li>
+          <li>Observation Employee Data [<span class="page">Observation Employee Form</span>]
+            <ul class="nested">
+              <li>Step-1: Basic Information [<span class="page">Basic Information Step</span>]</li>
+              <li>Step-2: Official Information [<span class="page">Official Information Step</span>]</li>
+              <li>Step-3: Address Information [<span class="page">Address Information Step</span>]</li>
+              <li>Step-4: References [<span class="page">References Step</span>]</li>
+              <li>Step-5: File Upload System [<span class="page">File Upload Step</span>]</li>
+            </ul>
+          </li>
+          <li>Contractual Employee Data [<span class="page">Contractual Employee Form</span>]
+            <ul class="nested">
+              <li>Step-1: Basic Information [<span class="page">Basic Information Step</span>]</li>
+              <li>Step-2: Official Information [<span class="page">Official Information Step</span>]</li>
+              <li>Step-3: Address Information [<span class="page">Address Information Step</span>]</li>
+              <li>Step-4: References [<span class="page">References Step</span>]</li>
+              <li>Step-5: File Upload System [<span class="page">File Upload Step</span>]</li>
+            </ul>
+          </li>
+          <li>Manage Employee [<span class="page">Employee Management Page</span>]</li>
+          <li>Manage Contractual Employee [<span class="page">Contractual Employee Management Page</span>]</li>
+          <li>Employee Agreement Management [<span class="page">Employee Agreement Page</span>]</li>
+          <li>Employee Service History (Lifecycle) [<span class="page">Service History Page</span>]</li>
+          <li>Employee Accommodation Facility Manage [<span class="page">Accommodation Facility Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Performance Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Performance Management<span class="count">(5)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Status Review &amp; Upgradation [<span class="page">Status Review Page</span>]</li>
+          <li>Employee Job Description [<span class="page">Job Description Page</span>]</li>
+          <li>Employee KPI [<span class="page">KPI Page</span>]</li>
+          <li>Employee Evaluation &amp; Appraisal Process [<span class="page">Evaluation &amp; Appraisal Page</span>]</li>
+          <li>Increment &amp; Promotion Management [<span class="page">Increment &amp; Promotion Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Attendance Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Attendance Management<span class="count">(8)</span></button>
+      <div class="items">
+        <ul>
+          <li>Holiday Configuration [<span class="page">Holiday Configuration Page</span>]</li>
+          <li>Manage Special Holiday Duty [<span class="page">Special Holiday Duty Page</span>]</li>
+          <li>Shift Configuration [<span class="page">Shift Configuration Page</span>]</li>
+          <li>Shift &amp; Roster Assignment [<span class="page">Roster Assignment Page</span>]</li>
+          <li>Manage Attendance (Manual) [<span class="page">Manual Attendance Page</span>]</li>
+          <li>Manage Attendance Correction [<span class="page">Attendance Correction Page</span>]</li>
+          <li>Manage Late Attendance Reconsideration [<span class="page">Late Attendance Reconsideration Page</span>]</li>
+          <li>Visit / Outdoor Work [<span class="page">Outdoor Work Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Leave Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Leave Management<span class="count">(6)</span></button>
+      <div class="items">
+        <ul>
+          <li>Leave Setup [<span class="page">Leave Setup Page</span>]</li>
+          <li>Leave Head Setup [<span class="page">Leave Head Setup Page</span>]</li>
+          <li>Leave Policy Configuration [<span class="page">Leave Policy Configuration Page</span>]</li>
+          <li>Leave Assignment [<span class="page">Leave Assignment Page</span>]</li>
+          <li>Leave Application [<span class="page">Leave Application Page</span>] 
+            <ul class="nested">
+              <li>Apply for Leave Form [<span class="page">Apply for Leave Page</span>]</li>
+            </ul>
+          </li>
+          <li>Early Out System [<span class="page">Early Out System Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Logistics Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Logistics Management<span class="count">(2)</span></button>
+      <div class="items">
+        <ul>
+          <li>Requisition Management [<span class="page">Requisition Management Page</span>]</li>
+          <li>Employee Logistics [<span class="page">Employee Logistics Page</span>]
+            <ul class="nested">
+              <li>Step 1: Item &amp; Inventory Management [<span class="page">Item &amp; Inventory Page</span>]</li>
+              <li>Step 2: Employee Assignment &amp; Returns [<span class="page">Assignment &amp; Returns Page</span>]</li>
+              <li>Step 3: Reporting [<span class="page">Logistics Reporting Page</span>]</li>
+              <li>Step 4: Employee Requisition Process [<span class="page">Employee Requisition Page</span>]</li>
+              <li>Step 5: Notifications [<span class="page">Logistics Notifications Page</span>]</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- OT/SP allowance Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">OT/SP Allowance Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage OT/SP Allowance [<span class="page">OT/SP Allowance Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Corporate SIM Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Corporate SIM Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>SIM Card Manage [<span class="page">SIM Card Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Provident Fund Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Provident Fund Management<span class="count">(3)</span></button>
+      <div class="items">
+        <ul>
+          <li>Provident Fund Policy Config. [<span class="page">PF Policy Configuration Page</span>]</li>
+          <li>Manage Provident Fund [<span class="page">Provident Fund Management Page</span>]</li>
+          <li>Manage PF Settlement, Loan &amp; Withdrawal [<span class="page">PF Settlement &amp; Loan Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Medical Treatment Record Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Medical Treatment Record Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Medical Treatment Record [<span class="page">Medical Treatment Record Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Grievance and Disciplinary Action Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Grievance &amp; Disciplinary Action Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Relations &amp; Compliance [<span class="page">Employee Relations &amp; Compliance Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Meal Facility Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Meal Facility Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Meal System [<span class="page">Meal System Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Notice Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Notice Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Notice [<span class="page">Notice Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Training/Meeting Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Training / Meeting Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Training / Meeting [<span class="page">Training &amp; Meeting Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Payroll Management (Module) -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Payroll Management<span class="count">(9)</span></button>
+      <div class="items">
+        <ul>
+          <li>Salary Structure Setup [<span class="page">Salary Structure Setup Page</span>]</li>
+          <li>Salary Sheet Generation [<span class="page">Salary Sheet Generation Page</span>]</li>
+          <li>Payslip Generation &amp; Disbursement [<span class="page">Payslip &amp; Disbursement Page</span>]</li>
+          <li>Salary Reconciliation (Payroll Adjustment &amp; Request Handling) [<span class="page">Salary Reconciliation Page</span>]</li>
+          <li>Salary Arrear Process [<span class="page">Salary Arrear Page</span>]</li>
+          <li>Bonus Policy Configuration [<span class="page">Bonus Policy Configuration Page</span>]</li>
+          <li>Bonus Generation &amp; Disbursement [<span class="page">Bonus Generation &amp; Disbursement Page</span>]</li>
+          <li>Manage Salary Contribution [<span class="page">Salary Contribution Page</span>]</li>
+          <li>TA/DA Management [<span class="page">TA/DA Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Loan Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Loan Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Salary Advance &amp; Long Term Loan [<span class="page">Loan Management Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Letter Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Letter Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Letter [<span class="page">Employee Letter Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Transfer Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Transfer Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Transfer Request Register [<span class="page">Transfer Request Register Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Offboarding Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Offboarding Management<span class="count">(4)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Separation Management [<span class="page">Employee Separation Page</span>]</li>
+          <li>Employee Clearance Management [<span class="page">Employee Clearance Page</span>]</li>
+          <li>Employee Exit Interview [<span class="page">Exit Interview Page</span>]</li>
+          <li>Final Settlement Management [<span class="page">Final Settlement Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Reports -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Reports<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Reporting Scope (Future) [<span class="page">Reports Overview Page</span>]</li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <p class="note">If you prefer route slugs (e.g., /payroll/salary-structure) instead of page titles, tell me and I will convert the bracketed names accordingly.</p>
+
+  <script>
+    document.querySelectorAll('.group > button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const items = btn.nextElementSibling;
+        const open = items.classList.toggle('open');
+        btn.setAttribute('aria-expanded', String(open));
+      });
+    });
+  </script>
+</body>
+</html>

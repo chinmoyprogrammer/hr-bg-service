@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MBW HRM — Backend API Schedule v2 (Testing & Feedback)</title>
+  <style>
+    body {font-family: Arial, sans-serif; line-height: 1.5; color: #222; margin: 24px;}
+    h1, h2, h3 {margin: 0.6em 0 0.3em;}
+    h1 {font-size: 24px;}
+    h2 {font-size: 18px;}
+    h3 {font-size: 16px;}
+    p {margin: 0.4em 0;}
+    .muted {color: #666;}
+    .card {border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 16px 0;}
+    .grid {display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;}
+    ul {margin: 0.3em 0 0.6em 1em;}
+    code {background: #f7f7f7; padding: 2px 4px; border-radius: 4px;}
+    .week {border-left: 4px solid #0b7; padding-left: 12px; margin: 16px 0;}
+    .badge {display: inline-block; background: #eefef5; color: #075; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin-left: 8px;}
+    .phase {display: inline-block; background: #f7f7f7; border: 1px solid #ddd; padding: 2px 6px; border-radius: 6px; font-size: 12px; margin-right: 6px;}
+    table {width: 100%; border-collapse: collapse; margin: 10px 0;}
+    th, td {border: 1px solid #ddd; padding: 8px; vertical-align: top;}
+    th {background: #fafafa;}
+  </style>
+  <meta name="description" content="CRUD-first backend schedule with integrated testing and stakeholder feedback over 20 weeks.">
+</head>
+<body>
+  <h1>MBW HRM — Backend API Development Schedule v2 (Testing & Feedback)</h1>
+  <p class="muted">Timeframe: <strong>5 months</strong> ≈ <strong>20 weeks</strong> • Capacity: <strong>24 days/month × 8h/day × 5 months = 960h</strong></p>
+
+  <div class="card">
+    <h2>Scope & Services</h2>
+    <ul>
+      <li>Backend-only APIs aligned to BRS and your Sheets: <code>SortedTables1</code> (tables) and <code>APIList1</code> (endpoints).</li>
+      <li>Running services: <code>api-gateway</code>, <code>auth</code>, <code>crm</code>, <code>hrm</code>, <code>notification</code>, <code>rabbitmq</code>, <code>redis</code>, <code>reporting</code>.</li>
+      <li>Primary implementation: <code>hr-admin-backend</code>, <code>crm-backend</code>, <code>reporting-backend</code>; exposed via <code>api-gateway-docker-micro-service</code> under <code>/api/v1</code>.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Testing & Feedback Cadence</h2>
+    <ul>
+      <li><span class="phase">Build</span> ~32h/week: implement endpoints, validation, RBAC, audit, pagination, error normalization, gateway mapping.</li>
+      <li><span class="phase">Test & Feedback</span> ~8h/week: unit/integration tests, Postman/cURL demos, gateway verification, stakeholder demo, feedback triage.</li>
+      <li><strong>Issue triage</strong>: categorize <code>P0</code> (blockers, fix same week), <code>P1</code> (high priority, fix within 1–2 weeks), <code>P2</code> (noncritical, scheduled later).</li>
+      <li><strong>Artifacts</strong>: Postman collection updates, test data seeds, changelog of endpoints, feedback log.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Demo & QA Method</h2>
+    <ul>
+      <li>Authenticate via <code>auth</code>, call gateway endpoints: <code>GET/POST/PUT/DELETE /api/v1/{entity}</code>.</li>
+      <li>Verify pagination (<code>?page,size,sort,filter,q</code>), RBAC (<code>401/403</code>), audit fields, error format <code>{errorCode,message,details}</code>.</li>
+      <li>Run integration tests against service containers; verify gateway CORS and route mapping.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Weekly Plan (Build + Test/Feedback)</h2>
+    <p class="muted">Each week includes ~32h build and ~8h test/feedback. APIs correspond to BRS pages.</p>
+
+    <div class="week">
+      <h3>Week 1 — Backend Foundations <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: versioning (<code>/api/v1</code>), RBAC middleware, audit fields, pagination utilities, error normalization; gateway mapping and CORS.</li>
+        <li>Test/Feedback: Postman env setup; sample cURL; RBAC deny/allow tests; gateway route smoke tests.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 2 — Company & Org (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Companies <code>/v1/companies</code>; Branches <code>/v1/branches</code>; Option Groups/Items <code>/v1/option-groups</code>, <code>/v1/option-items</code>.</li>
+        <li>Test/Feedback: CRUD happy-path + validation; pagination/sort/filter; gateway mapping; stakeholder demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 3 — Org (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Departments <code>/v1/departments</code>; Sections <code>/v1/sections</code>; Sub-Sections <code>/v1/sub-sections</code>; Approver Hierarchies <code>/v1/approver-hierarchies</code>.</li>
+        <li>Test/Feedback: hierarchy validations; list performance; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 4 — Address & Education APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Divisions <code>/v1/divisions</code>; Districts <code>/v1/districts</code>; Upazilas <code>/v1/upazilas</code>; Education (<code>/v1/degree-titles</code>, <code>/v1/boards</code>, <code>/v1/subjects</code>).</li>
+        <li>Test/Feedback: referential checks; filters; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 5 — Employee Master (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Designation Levels <code>/v1/designation-levels</code>; Designations <code>/v1/designations</code>; Employees <code>/v1/employees</code>.</li>
+        <li>Test/Feedback: RBAC across endpoints; search; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 6 — Onboarding (Steps 1–5) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Employees sub-resources: <code>basic-info</code>, <code>official-info</code>, <code>address-info</code>, <code>education-info</code>, <code>experience-history</code>.</li>
+        <li>Test/Feedback: transactional saves; validation; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 7 — Onboarding (Steps 6–10) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: <code>/v1/employees/:id/training</code>, <code>skills</code>, <code>family</code>, <code>nominees</code>, <code>references</code>, <code>vehicles</code>.</li>
+        <li>Test/Feedback: relationship constraints; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 8 — Employee Types & Management APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Observation and Contractual employee sub-resources; profile endpoints.</li>
+        <li>Test/Feedback: type-specific rules; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 9 — Employee Lifecycle APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Agreements <code>/v1/employees/:id/agreements</code>; Service history <code>/v1/employees/:id/service-history</code>; Accommodation <code>/v1/employees/:id/accommodation</code>.</li>
+        <li>Test/Feedback: lifecycle transitions; audit; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 10 — Performance (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Job Descriptions <code>/v1/job-descriptions</code>; KPIs <code>/v1/kpis</code>; Reviews.</li>
+        <li>Test/Feedback: appraisal prerequisites; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 11 — Performance (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Appraisals <code>/v1/appraisals</code>; Increments <code>/v1/increments</code>; Promotions <code>/v1/promotions</code>.</li>
+        <li>Test/Feedback: evaluation flows; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 12 — Attendance (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Holidays <code>/v1/holidays</code>; Special Duties <code>/v1/special-duties</code>; Shifts <code>/v1/shifts</code>.</li>
+        <li>Test/Feedback: date-range validations; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 13 — Attendance (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Rosters <code>/v1/rosters</code>; Attendance <code>/v1/attendance</code>; Corrections <code>/v1/attendance-corrections</code>; Late Reconsiderations <code>/v1/late-reconsiderations</code>; Outdoor Work <code>/v1/outdoor-works</code>.</li>
+        <li>Test/Feedback: assignment integrity; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 14 — Leave (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Leave Heads <code>/v1/leave-heads</code>; Policies <code>/v1/leave-policies</code>; Assignments <code>/v1/leave-assignments</code>.</li>
+        <li>Test/Feedback: policy rule checks; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 15 — Leave (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Applications <code>/v1/leave-applications</code>; Early Out <code>/v1/early-outs</code>.</li>
+        <li>Test/Feedback: approval flows (stubbed where needed); demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 16 — Logistics & Requisition APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Items/Inventory <code>/v1/items</code>, <code>/v1/inventory</code>; Assignments/Returns <code>/v1/assignments</code>, <code>/v1/returns</code>; Requisitions <code>/v1/requisitions</code>; notification events.</li>
+        <li>Test/Feedback: event publishing and consumption; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 17 — Allowances & Corporate Assets APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Allowances <code>/v1/allowances</code>; Corporate SIMs <code>/v1/sims</code>; PF Policies <code>/v1/pf-policies</code>.</li>
+        <li>Test/Feedback: policy validations; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 18 — Provident Fund & Finance APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: PF Management <code>/v1/provident-funds</code>; PF Settlements/Withdrawals <code>/v1/pf-settlements</code>, <code>/v1/pf-withdrawals</code>; Loans <code>/v1/loans</code>.</li>
+        <li>Test/Feedback: financial validations; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 19 — People Ops & Training APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Medical Records <code>/v1/medical-records</code>; Grievances/Disciplinary <code>/v1/grievances</code>, <code>/v1/disciplinary-actions</code>; Meals <code>/v1/meals</code>; Notices <code>/v1/notices</code>; Trainings/Meetings <code>/v1/trainings</code>, <code>/v1/meetings</code>.</li>
+        <li>Test/Feedback: cross-entity constraints; demo & triage.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 20 — Payroll & Exit Ops + QA/Reporting APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>Build: Payroll suite (<code>/v1/salary-structures</code>, <code>/v1/salary-sheets</code>, <code>/v1/payslips</code>, <code>/v1/reconciliations</code>, <code>/v1/arrears</code>, <code>/v1/bonus-policies</code>, <code>/v1/bonuses</code>, <code>/v1/salary-contributions</code>); Loans; Employee Letters; Transfers; Offboarding (<code>/v1/separations</code>, <code>/v1/clearances</code>, <code>/v1/exit-interviews</code>, <code>/v1/final-settlements</code>); Reporting KPIs.</li>
+        <li>Test/Feedback: end-to-end flows through gateway; regression suite; stakeholder sign-off.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Definition of Done (per API set)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Aspect</th>
+          <th>Done Criteria</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Endpoints</td>
+          <td><code>GET/POST/PUT/DELETE</code> implemented; validation; RBAC; audit; pagination; error normalization.</td>
+        </tr>
+        <tr>
+          <td>Tests</td>
+          <td>Unit/integration tests pass; gateway smoke tests; regression updated.</td>
+        </tr>
+        <tr>
+          <td>Artifacts</td>
+          <td>Postman/cURL scripts; seeds; changelog; feedback log.</td>
+        </tr>
+        <tr>
+          <td>Feedback</td>
+          <td>Stakeholder demo done; P0 fixed same week; P1 scheduled; P2 backlog.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Risk & Buffers</h2>
+    <ul>
+      <li>Complex workflows (approvals, payroll rules) timeboxed to CRUD; advanced logic stubbed or deferred with clear contracts.</li>
+      <li>Weekly buffer ~4–8h for refactors from <code>SortedTables1</code> changes or inter-service integration issues.</li>
+      <li>Gateway resiliency (timeouts/retries) tuned as needed; error observability added.</li>
+    </ul>
+  </div>
+
+  <p class="muted">Version v2 — testing and feedback integrated weekly. Adjust as your Sheets evolve.</p>
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API Endpoints Catalog — Methods, Requests, Responses</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.5; color: #222; }
+    h1, h2, h3 { margin: 0.6rem 0; }
+    .meta { color: #555; font-size: 0.95rem; }
+    .section { margin-top: 2rem; }
+    .panel { background: #fbfbfb; border: 1px solid #eee; padding: 0.8rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f7f7f7; text-align: left; }
+    code, pre { background: #f4f4f4; padding: 4px 6px; border-radius: 3px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
+    textarea { width: 100%; min-height: 90px; }
+    button { padding: 6px 10px; cursor: pointer; }
+    .status-done { color: #0a7a0a; font-weight: bold; }
+    .status-pending { color: #c25d00; font-weight: bold; }
+    .totals { background: #fbfbfb; border: 1px solid #eee; padding: 0.8rem; margin-top: 0.6rem; }
+  </style>
+  <meta name="referrer" content="no-referrer" />
+</head>
+<body>
+  <h1>API Endpoints Catalog — Methods, Requests, Responses</h1>
+  <p class="meta">This catalog lists standard CRUD endpoints per table with HTTP method, path, and generic request/response templates. Done tables are marked and excluded from remaining counts. No field-level guessing: requests/responses reference real table columns (import from your Google Sheet or paste all table names). </p>
+
+  <div class="panel">
+    <h3>Mark Completed APIs</h3>
+    <div class="grid">
+      <label for="completedInput">Paste comma-separated table names completed (e.g., countries, divisions, users):</label>
+      <textarea id="completedInput" placeholder="countries, divisions, users, ..."></textarea>
+      <button id="applyCompletedBtn">Apply Completed List</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Import Tables From Google Sheet (Source of Truth)</h3>
+    <div class="grid">
+      <label for="sheetUrl">Google Sheet URL (sheet gid optional):</label>
+      <textarea id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=6918758#gid=6918758">https://docs.google.com/spreadsheets/d/1-MGH02bLqHl4TFx930x-5vzirS51z8oZETILldTRa7E/edit?gid=6918758#gid=6918758</textarea>
+      <button id="fetchSheetBtn">Fetch Sheet</button>
+
+      <label for="sheetColumnSelect">Select column containing table names:</label>
+      <select id="sheetColumnSelect"></select>
+      <button id="applySheetColumnBtn" disabled>Apply Selected Column</button>
+
+      <label for="allTablesManual">Or paste ALL table names from the sheet (comma or newline separated):</label>
+      <textarea id="allTablesManual" placeholder="countries\ndivisions\nusers\n..."></textarea>
+      <button id="applyAllTablesBtn">Apply All Tables (Manual)</button>
+      <p class="meta">When the sheet is applied, we only show endpoints for tables present in that sheet; completed ones are marked Done. Unknown names appear separately as Unclassified.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Standard Endpoint Shapes</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Method</th>
+          <th>Path</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/api/{table}</code></td><td>Create new {table} record</td></tr>
+        <tr><td>GET</td><td><code>/api/{table}</code></td><td>List with pagination/filter/sort</td></tr>
+        <tr><td>GET</td><td><code>/api/{table}/{id}</code></td><td>Read by ID</td></tr>
+        <tr><td>PUT</td><td><code>/api/{table}/{id}</code></td><td>Full update by ID</td></tr>
+        <tr><td>PATCH</td><td><code>/api/{table}/{id}</code></td><td>Partial update by ID</td></tr>
+        <tr><td>DELETE</td><td><code>/api/{table}/{id}</code></td><td>Soft/hard delete as applicable</td></tr>
+      </tbody>
+    </table>
+
+    <p class="meta">Auth header where required: <code>Authorization: Bearer &lt;token&gt;</code>. Requests/responses refer to real columns; import the sheet to avoid guessing.</p>
+  </div>
+
+  <div class="totals" id="globalTotals"></div>
+
+  <div id="content"></div>
+
+  <script>
+    const sections = [
+      { name: 'HR Admin — Master Data', items: [
+        'countries','divisions','districts','upazilas','branches','departments','sections','subsections','units','genders','religion','bank_names','bank_branches','letter_types','notice_categories','holiday_types','expense_heads','expense_categories','user_types'
+      ]},
+      { name: 'HR Admin — Employee Core', items: [
+        'employee_basic_information','employee_official_information','employee_addresses','phone_numbers','employee_types','employee_family_nominee','employee_references','user_settings','users','companies','business_settings'
+      ]},
+      { name: 'HR Admin — Education & Training', items: [
+        'education_levels','exam_degree_titles','education_boards_universities','education_groups_subjects','employee_educations','employee_trainings'
+      ]},
+      { name: 'HR Admin — Attendance', items: [
+        'employee_attendance','meal_pauses','shifts','rosters','roster_assignments','weekly_off_settings','late_attendance_records','early_out_requests','employee_applied_attendance_corrections','employee_ot_data','employee_ot_policies'
+      ]},
+      { name: 'HR Admin — Leave', items: [
+        'leave_heads','leave_policies','leave_policy_details','leave_applications','leave_carry_forwards','leave_balance_transfers','employee_leave_balances'
+      ]},
+      { name: 'HR Admin — Payroll & Finance', items: [
+        'salary_grades','payroll_structure','payroll_salary_heads','payroll_salary_head_category','payroll_salary_sheet_heads','payroll_salary_sheet_heads_temp','payroll_salary_sheet','payroll_salary_sheet_temp','payroll_pre_salary_sheet_deductions','payroll_accrued_allowance_income','recommanded_salary','payments','payroll_salary_advance_n_loans','payroll_salary_loan_advance_n_other_installments'
+      ]},
+      { name: 'HR Admin — Provident Fund', items: [
+        'employee_pf_policy','employee_pf_contribution','employee_contribution_issues','employee_contribution_responses'
+      ]},
+      { name: 'HR Admin — Assets & Logistics', items: [
+        'company_assets_category','company_assets_inventory','company_assets_serials','company_assets_purchase','company_assets_distribution','accomodation_locations','accommodation_requests','accommodation_allocations','accommodation_maintenance','visit_requests','visit_tracking'
+      ]},
+      { name: 'HR Admin — Evaluation & Performance', items: [
+        'evaluation_templates','evaluation_questions','evaluation_answers','other_evaluation_types','other_evaluation_results','evaluatee_list','evaluatee_recommandation_list','recommandation_name_list','evaluation_template_questions','meetings','letter_types','letter_templates','employee_letters'
+      ]},
+      { name: 'HR Admin — Holidays & Notices', items: [
+        'holidays','holiday_facilities','holiday_duty_assignments','holiday_duty_requisition','holiday_duty_requisition_detail','notices','notice_categories'
+      ]},
+      { name: 'HR Admin — Employee Relations / PR', items: [
+        'pr_problem_categories','pr_problem_sub_categories','pr_problem_register','pr_committee','pr_committee_judge_n_members','pr_committee_judgement_report','pr_problem_register_accoused_persons','pr_committee_witnesses'
+      ]},
+      { name: 'HR Admin — Agreements & Notifications', items: [
+        'agreement_templates','letter_templates','employee_agreements','notifications','user_distribution_n_acknowledgement_log'
+      ]},
+      { name: 'HR Admin — Medical & Welfare', items: [
+        'employee_medical_records','employee_medical_followups','employee_medical_urgency_types','employee_ta_da','employee_ta_da_expense_breakdowns'
+      ]},
+      { name: 'HR Admin — Recruitment & Separation', items: [
+        'jobs','separation_applications','separation_types','increment_promotion_batches','increment_promotion_history','increment_promotion_records','employee_designations','employee_designation_levels'
+      ]},
+      { name: 'HR Admin — Visits & Media', items: [
+        'visit_requests','visit_tracking','media_uploads','media_upload_usage','media_servers'
+      ]},
+      { name: 'CRM Backend', items: [
+        'crm_groups','territory_incharges'
+      ]}
+    ];
+
+    const state = {
+      done: new Set(),
+      sheetTables: new Set(),
+      sheetHeaders: [],
+      sheetRows: []
+    };
+
+    function normalize(name){ return String(name).trim().toLowerCase(); }
+
+    function applyCompletedList() {
+      const raw = document.getElementById('completedInput').value;
+      const parts = raw.split(',');
+      state.done = new Set(parts.map(normalize).filter(Boolean));
+      render();
+    }
+
+    function parseSheetUrl(url) {
+      try {
+        const u = new URL(url.trim());
+        const parts = u.pathname.split('/');
+        const sheetIdIdx = parts.indexOf('d') + 1;
+        const sheetId = parts[sheetIdIdx];
+        const gid = (u.searchParams.get('gid') || (u.hash.includes('gid=') ? u.hash.split('gid=')[1] : '0')).replace('#','');
+        return { sheetId, gid };
+      } catch(e) { return null; }
+    }
+
+    async function fetchSheet() {
+      const url = document.getElementById('sheetUrl').value;
+      const parsed = parseSheetUrl(url);
+      if (!parsed) { alert('Invalid Google Sheet URL'); return; }
+      const gviz = `https://docs.google.com/spreadsheets/d/${parsed.sheetId}/gviz/tq?tqx=out:json&gid=${parsed.gid}`;
+      try {
+        const res = await fetch(gviz, { mode: 'cors' });
+        const text = await res.text();
+        const jsonStr = text.replace(/^.*setResponse\(/, '').replace(/\);\s*$/, '');
+        const data = JSON.parse(jsonStr);
+        const headers = data.table.cols.map(c => c.label || c.id || '').map(h => h.trim());
+        const rows = data.table.rows.map(r => r.c.map(cell => (cell && cell.v != null ? String(cell.v) : '').trim()));
+        state.sheetHeaders = headers;
+        state.sheetRows = rows;
+        const select = document.getElementById('sheetColumnSelect');
+        select.innerHTML = headers.map((h, idx) => `<option value="${idx}">${h || 'Column ' + (idx+1)}</option>`).join('');
+        document.getElementById('applySheetColumnBtn').disabled = headers.length === 0;
+        alert(`Fetched sheet with ${headers.length} columns and ${rows.length} rows.`);
+      } catch(err) {
+        console.error(err);
+        alert('Failed to fetch sheet. If private or blocked by CORS, paste ALL table names manually.');
+      }
+    }
+
+    function applySheetColumn() {
+      const idx = parseInt(document.getElementById('sheetColumnSelect').value, 10);
+      const names = state.sheetRows.map(r => r[idx]).map(normalize).filter(Boolean);
+      state.sheetTables = new Set(names);
+      render();
+    }
+
+    function applyAllTablesManual() {
+      const raw = document.getElementById('allTablesManual').value;
+      const parts = raw.split(/[\n,]/);
+      state.sheetTables = new Set(parts.map(normalize).filter(Boolean));
+      render();
+    }
+
+    function endpointRows(table) {
+      const base = `/api/${table}`;
+      return [
+        { method: 'POST', path: `${base}`, desc: 'Create new record', request: '{ /* fields from DB columns */ }', response: '{ data: { /* created row */ } }' },
+        { method: 'GET', path: `${base}`, desc: 'List with pagination/filter/sort', request: 'query: page, per_page, sort, filter', response: '{ data: [ /* rows */ ], meta: { page, per_page, total } }' },
+        { method: 'GET', path: `${base}/{id}`, desc: 'Read by ID', request: 'params: id', response: '{ data: { /* row */ } }' },
+        { method: 'PUT', path: `${base}/{id}`, desc: 'Full update by ID', request: '{ /* fields from DB columns */ }', response: '{ data: { /* updated row */ } }' },
+        { method: 'PATCH', path: `${base}/{id}`, desc: 'Partial update by ID', request: '{ /* subset of fields */ }', response: '{ data: { /* updated row */ } }' },
+        { method: 'DELETE', path: `${base}/{id}`, desc: 'Delete (soft/hard)', request: 'params: id', response: '{ success: true }' }
+      ];
+    }
+
+    function curlDemo(row) {
+      const auth = 'Authorization: Bearer <token>';
+      switch (row.method) {
+        case 'POST': return `curl -X POST -H "Content-Type: application/json" -H "${auth}" \\\n+  -d '${row.request}' \\\n+  ${row.path}`;
+        case 'GET': return `curl -X GET -H "${auth}" ${row.path}`;
+        case 'PUT': return `curl -X PUT -H "Content-Type: application/json" -H "${auth}" \\\n+  -d '${row.request}' \\\n+  ${row.path}`;
+        case 'PATCH': return `curl -X PATCH -H "Content-Type: application/json" -H "${auth}" \\\n+  -d '${row.request}' \\\n+  ${row.path}`;
+        case 'DELETE': return `curl -X DELETE -H "${auth}" ${row.path}`;
+        default: return '';
+      }
+    }
+
+    function render() {
+      const useSheet = state.sheetTables && state.sheetTables.size > 0;
+      let html = '';
+
+      const known = new Map();
+      sections.forEach(sec => sec.items.forEach(t => known.set(normalize(t), { table: t, section: sec.name })));
+
+      let totalTables = 0, completedCount = 0, pendingCount = 0;
+      const unknownFromSheet = [];
+
+      sections.forEach(sec => {
+        html += `<div class="section"><h2>${sec.name}</h2>`;
+        html += `<table><thead><tr><th>Status</th><th>Method</th><th>Path</th><th>Description</th><th>Request</th><th>Response</th></tr></thead><tbody>`;
+        sec.items.forEach(table => {
+          const nm = normalize(table);
+          if (useSheet && !state.sheetTables.has(nm)) { return; }
+          totalTables++;
+          const isDone = state.done.has(nm);
+          const status = isDone ? '<span class="status-done">Done</span>' : '<span class="status-pending">Pending</span>';
+          if (isDone) { completedCount++; } else { pendingCount++; }
+          endpointRows(table).forEach(row => {
+            const demo = curlDemo(row);
+            html += `<tr>` +
+              `<td>${status}</td>` +
+              `<td>${row.method}</td>` +
+              `<td><code>${row.path}</code></td>` +
+              `<td>${row.desc}</td>` +
+              `<td><pre>${row.request}</pre></td>` +
+              `<td><pre>${row.response}</pre></td>` +
+            `</tr>` +
+            `<tr><td colspan="6"><strong>Demo:</strong><pre>${demo}</pre></td></tr>`;
+          });
+        });
+        html += `</tbody></table>`;
+        html += `</div>`;
+      });
+
+      if (useSheet) {
+        state.sheetTables.forEach(t => { if (!known.has(t)) unknownFromSheet.push(t); });
+        if (unknownFromSheet.length) {
+          html += `<div class="section"><h2>Unclassified (from Google Sheet)</h2>`;
+          html += `<table><thead><tr><th>Status</th><th>Method</th><th>Path</th><th>Description</th><th>Request</th><th>Response</th></tr></thead><tbody>`;
+          unknownFromSheet.forEach(u => {
+            const isDone = state.done.has(u);
+            const status = isDone ? '<span class="status-done">Done</span>' : '<span class="status-pending">Pending</span>';
+            endpointRows(u).forEach(row => {
+              const demo = curlDemo(row);
+              html += `<tr>` +
+                `<td>${status}</td>` +
+                `<td>${row.method}</td>` +
+                `<td><code>${row.path}</code></td>` +
+                `<td>${row.desc}</td>` +
+                `<td><pre>${row.request}</pre></td>` +
+                `<td><pre>${row.response}</pre></td>` +
+              `</tr>` +
+              `<tr><td colspan="6"><strong>Demo:</strong><pre>${demo}</pre></td></tr>`;
+            });
+          });
+          html += `</tbody></table>`;
+          html += `</div>`;
+        }
+      }
+
+      const global = document.getElementById('globalTotals');
+      global.innerHTML = `<strong>Global:</strong> Tables ${totalTables}, Completed ${completedCount}, Pending ${pendingCount}.`;
+      document.getElementById('content').innerHTML = html;
+    }
+
+    document.getElementById('applyCompletedBtn').addEventListener('click', applyCompletedList);
+    document.getElementById('fetchSheetBtn').addEventListener('click', fetchSheet);
+    document.getElementById('applySheetColumnBtn').addEventListener('click', applySheetColumn);
+    document.getElementById('applyAllTablesBtn').addEventListener('click', applyAllTablesManual);
+
+    // Preload with your last provided done list for convenience
+    const prefilledDone = [
+      'countries','divisions','districts','upazilas','branches','departments','sections','subsections','units','genders','religion','bank_names','bank_branches','letter_types','notice_categories','holiday_types','expense_heads','expense_categories','user_types','employee_basic_information','employee_official_information','employee_addresses','employee_types','employee_family_nominee','employee_references','user_settings','users','companies','education_levels','exam_degree_titles','education_boards_universities','education_groups_subjects'
+    ];
+    document.getElementById('completedInput').value = prefilledDone.join(', ');
+    applyCompletedList();
+  </script>
+</body>
+</html>

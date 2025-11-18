@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API List with Time Estimates (Derived from SortedTable1 via Migrations)</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.5; color: #222; }
+    h1, h2, h3 { margin: 0.6rem 0; }
+    .meta { color: #555; font-size: 0.95rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f7f7f7; text-align: left; }
+    code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    .section { margin-top: 2rem; }
+    .legend { background: #fbfbfb; border: 1px solid #eee; padding: 0.8rem; }
+    .totals { background: #fbfbfb; border: 1px solid #eee; padding: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>API List with Time Estimates</h1>
+  <p class="meta">
+    Source: Derived by scanning service migrations (proxy for Google Sheet "SortedTable1").<br />
+    Services covered: <strong>hr-admin-backend</strong>, <strong>crm-backend</strong> (migrations present), <strong>reporting-backend</strong> (no migrations found).<br />
+    Method: Standard CRUD endpoints per table; categorized for effort (Simple | Complex | Highly Complex).
+  </p>
+
+  <div class="legend">
+    <h3>Legend: Endpoint Shapes and Dev Time by Category</h3>
+    <p>For each table, the following standard endpoints are planned:</p>
+    <ul>
+      <li>POST <code>/{table}</code> — Create</li>
+      <li>GET <code>/{table}</code> — List with pagination/filter/sort</li>
+      <li>GET <code>/{table}/{id}</code> — Read by ID</li>
+      <li>PUT/PATCH <code>/{table}/{id}</code> — Update</li>
+      <li>DELETE <code>/{table}/{id}</code> — Soft/hard delete as applicable</li>
+    </ul>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Create (h)</th>
+          <th>List (h)</th>
+          <th>Get (h)</th>
+          <th>Update (h)</th>
+          <th>Delete (h)</th>
+          <th>Total per Table (h)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Simple (Lookup/Master)</td>
+          <td>1.0</td>
+          <td>0.75</td>
+          <td>0.5</td>
+          <td>1.0</td>
+          <td>0.75</td>
+          <td>4.0</td>
+        </tr>
+        <tr>
+          <td>Complex (Transactional/Employee/Attendance/Leave/Logistics)</td>
+          <td>2.0</td>
+          <td>1.5</td>
+          <td>1.0</td>
+          <td>2.0</td>
+          <td>1.5</td>
+          <td>8.0</td>
+        </tr>
+        <tr>
+          <td>Highly Complex (Payroll/Financial)</td>
+          <td>3.0</td>
+          <td>2.0</td>
+          <td>1.0</td>
+          <td>3.0</td>
+          <td>2.0</td>
+          <td>11.0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Notes: Times include controller, routes, validation, policies (RBAC), simple Eloquent resources, and DTO formatting. Complex tables include relationship handling and domain rules. Highly Complex includes additional computation, batch operations, and reconciliation logic.</p>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Master Data</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Category</th>
+          <th>Endpoints</th>
+          <th>Dev Time (h)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>countries</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>divisions</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>districts</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>upazilas</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>branches</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>departments</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>sections</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>subsections</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>units</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>genders</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>religion</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>bank_names</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>bank_branches</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>letter_types</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>notice_categories</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>holiday_types</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>expense_heads</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>expense_categories</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+        <tr><td>user_types</td><td>Simple</td><td>POST, GET(list), GET(id), PUT/PATCH, DELETE</td><td>4.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Master Data):</strong> 19 tables × 4.0 h = <strong>76.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Employee Core</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>employee_basic_information</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_official_information</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_addresses</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>phone_numbers</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_types</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_family_nominee</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_references</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>user_settings</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>users</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>companies</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>business_settings</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Employee Core):</strong> 9 complex × 8.0 h + 2 simple × 4.0 h = <strong>80.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Education & Training</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>education_levels</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>exam_degree_titles</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>education_boards_universities</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>education_groups_subjects</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>employee_educations</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_trainings</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Education & Training):</strong> 4 simple × 4.0 h + 2 complex × 8.0 h = <strong>32.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Attendance</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>employee_attendance</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>meal_pauses</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>shifts</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>rosters</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>roster_assignments</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>weekly_off_settings</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>late_attendance_records</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>early_out_requests</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_applied_attendance_corrections</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_ot_data</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_ot_policies</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Attendance):</strong> 11 complex × 8.0 h = <strong>88.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Leave</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>leave_heads</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>leave_policies</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>leave_policy_details</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>leave_applications</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>leave_carry_forwards</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>leave_balance_transfers</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_leave_balances</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Leave):</strong> 7 complex × 8.0 h = <strong>56.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Payroll & Finance</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>salary_grades</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_structure</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_heads</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_head_category</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_sheet_heads</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_sheet_heads_temp</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_sheet</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_sheet_temp</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_pre_salary_sheet_deductions</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_accrued_allowance_income</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>recommanded_salary</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payments</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_advance_n_loans</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>payroll_salary_loan_advance_n_other_installments</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Payroll & Finance):</strong> 14 highly complex × 11.0 h = <strong>154.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Provident Fund</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>employee_pf_policy</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_pf_contribution</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_contribution_issues</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_contribution_responses</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (PF):</strong> 4 complex × 8.0 h = <strong>32.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Assets & Logistics</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>company_assets_category</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>company_assets_inventory</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>company_assets_serials</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>company_assets_purchase</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>company_assets_distribution</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>accomodation_locations</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>accommodation_requests</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>accommodation_allocations</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>accommodation_maintenance</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>visit_requests</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>visit_tracking</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Assets & Logistics):</strong> 9 complex × 8.0 h + 1 simple × 4.0 h = <strong>76.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Evaluation & Performance</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>evaluation_templates</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>evaluation_questions</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>evaluation_answers</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>other_evaluation_types</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>other_evaluation_results</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>evaluatee_list</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>evaluatee_recommandation_list</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>recommandation_name_list</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>evaluation_template_questions</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>meetings</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>letter_types</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>letter_templates</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_letters</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Evaluation & Performance):</strong> 9 complex × 8.0 h + 3 simple × 4.0 h = <strong>84.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Holidays & Notices</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>holidays</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>holiday_facilities</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>holiday_duty_assignments</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>holiday_duty_requisition</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>holiday_duty_requisition_detail</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>notices</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>notice_categories</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Holidays & Notices):</strong> 6 complex × 8.0 h + 1 simple × 4.0 h = <strong>52.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Employee Relations / PR</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>pr_problem_categories</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>pr_problem_sub_categories</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>pr_problem_register</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>pr_committee</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>pr_committee_judge_n_members</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>pr_committee_judgement_report</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>pr_problem_register_accoused_persons</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>pr_committee_witnesses</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Employee Relations/PR):</strong> 6 complex × 8.0 h + 2 simple × 4.0 h = <strong>56.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Agreements & Notifications</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>agreement_templates</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>letter_templates</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_agreements</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>notifications</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>user_distribution_n_acknowledgement_log</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Agreements & Notifications):</strong> 3 complex × 8.0 h + 2 simple × 4.0 h = <strong>32.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Medical & Welfare</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>employee_medical_records</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_medical_followups</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_medical_urgency_types</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>employee_ta_da</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_ta_da_expense_breakdowns</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Medical & Welfare):</strong> 4 complex × 8.0 h + 1 simple × 4.0 h = <strong>36.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Recruitment & Separation</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>jobs</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>separation_applications</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>separation_types</td><td>Simple</td><td>CRUD</td><td>4.0</td></tr>
+        <tr><td>increment_promotion_batches</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>increment_promotion_history</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>increment_promotion_records</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>employee_designations</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>salary_grades (see Payroll)</td><td>Highly Complex</td><td>CRUD</td><td>11.0</td></tr>
+        <tr><td>employee_designation_levels</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Recruitment & Separation):</strong> 8 complex × 8.0 h + 1 simple × 4.0 h + note on salary_grades captured in Payroll = <strong>68.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>HR Admin — Visits & Media</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>visit_requests</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>visit_tracking</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>media_uploads</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>media_upload_usage</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>media_servers</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (Visits & Media):</strong> 5 complex × 8.0 h = <strong>40.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>CRM Backend</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Category</th><th>Endpoints</th><th>Dev Time (h)</th></tr></thead>
+      <tbody>
+        <tr><td>crm_groups</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+        <tr><td>territory_incharges</td><td>Complex</td><td>CRUD</td><td>8.0</td></tr>
+      </tbody>
+    </table>
+    <div class="totals"><strong>Section Total (CRM):</strong> 2 complex × 8.0 h = <strong>16.0 h</strong></div>
+  </div>
+
+  <div class="section">
+    <h2>Reporting Backend</h2>
+    <p>No migrations found; APIs will depend on read-models and views. Estimation deferred until reporting schema is provided.</p>
+  </div>
+
+  <div class="section">
+    <h2>Global Totals</h2>
+    <ul>
+      <li>Master Data: 76.0 h</li>
+      <li>Employee Core: 80.0 h</li>
+      <li>Education & Training: 32.0 h</li>
+      <li>Attendance: 88.0 h</li>
+      <li>Leave: 56.0 h</li>
+      <li>Payroll & Finance: 154.0 h</li>
+      <li>Provident Fund: 32.0 h</li>
+      <li>Assets & Logistics: 76.0 h</li>
+      <li>Evaluation & Performance: 84.0 h</li>
+      <li>Holidays & Notices: 52.0 h</li>
+      <li>Employee Relations / PR: 56.0 h</li>
+      <li>Agreements & Notifications: 32.0 h</li>
+      <li>Medical & Welfare: 36.0 h</li>
+      <li>Recruitment & Separation: 68.0 h (salary_grades counted in Payroll)</li>
+      <li>Visits & Media: 40.0 h</li>
+      <li>CRM: 16.0 h</li>
+      <li>Reporting: TBD</li>
+    </ul>
+    <p><strong>Subtotal (excluding Reporting):</strong> 850.0 h of development effort.</p>
+    <p>Refer to the companion file <code>docs/api-test-and-feedback-time.html</code> for testing and feedback allocation per API.</p>
+  </div>
+
+  <div class="section">
+    <h2>Assumptions & Notes</h2>
+    <ul>
+      <li>Times assume Laravel stacks with existing migrations and standard policies.</li>
+      <li>Endpoints include RBAC, validation, resource formatting, basic error handling.</li>
+      <li>Batch operations, complex reports, and workflow/state transitions are out of scope for CRUD baseline and would add time.</li>
+      <li>If any table is not intended for direct API exposure (e.g., temp or pivot), we can omit or reduce scope accordingly.</li>
+    </ul>
+  </div>
+
+</body>
+</html>

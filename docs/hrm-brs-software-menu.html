@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HRM Software Menu (from BRS)</title>
+  <style>
+    :root { --fg:#222; --muted:#666; --border:#e5e7eb; --accent:#0a7; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; color: var(--fg); }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+    .menu { max-width: 900px; }
+    .group { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; overflow: hidden; }
+    .group > button { width: 100%; text-align: left; padding: 10px 12px; background: #f9fafb; border: none; cursor: pointer; font-weight: 600; }
+    .group > button:hover { background: #f3f4f6; }
+    .group > button .count { color: var(--muted); font-weight: 400; margin-left: 8px; }
+    .items { display: none; padding: 8px 14px 14px; }
+    .items.open { display: block; }
+    ul { list-style: none; padding-left: 0; margin: 6px 0 0; }
+    li { margin: 4px 0; }
+    .label { font-weight: 600; }
+    .nested { padding-left: 18px; border-left: 2px solid var(--border); margin-left: 6px; }
+    .badge { display: inline-block; font-size: 11px; color: #055; background: #c7f2e3; border: 1px solid #8fdcc6; border-radius: 10px; padding: 1px 6px; margin-left: 6px; }
+    .note { color: var(--muted); font-size: 12px; margin-top: 18px; }
+  </style>
+</head>
+<body>
+  <h1>HRM Software Menu</h1>
+  <p class="sub">Derived strictly from the HRM BRS feature list; organized for application navigation.</p>
+
+  <div class="menu" id="menu">
+    <!-- Authentication & Roles -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Authentication & Roles<span class="count">(2)</span></button>
+      <div class="items">
+        <ul>
+          <li>Login / Sign In</li>
+          <li>User Role Management</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- UI Behaviour -->
+    <section class="group">
+      <button type="button" aria-expanded="false">UI Behaviour Configuration<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>UI Behaviour Feature</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Administrative Configuration -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Administrative Configuration<span class="count">(2)</span></button>
+      <div class="items">
+        <ul>
+          <li>Company Setup</li>
+          <li>Dropdown Option Configuration</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- HR & Administrative Configuration -->
+    <section class="group">
+      <button type="button" aria-expanded="false">HR & Administrative Configuration<span class="count">(11)</span></button>
+      <div class="items">
+        <ul>
+          <li>Branch Setup</li>
+          <li>Department Setup</li>
+          <li>Section Setup</li>
+          <li>Sub-Section Setup</li>
+          <li>Designation Level Setup</li>
+          <li>Designation Setup</li>
+          <li>Payroll Management <span class="badge">Salary Grade Setup</span></li>
+          <li>Address Configuration
+            <ul class="nested">
+              <li>Division Management</li>
+              <li>District Management</li>
+              <li>Upazila / Thana Management</li>
+            </ul>
+          </li>
+          <li>Educational System Configuration
+            <ul class="nested">
+              <li>Exam / Degree Title Setup</li>
+              <li>Education Board / University Setup</li>
+              <li>Group / Subject Setup</li>
+            </ul>
+          </li>
+          <li>Approver Hierarchy</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Management<span class="count">(8)</span></button>
+      <div class="items">
+        <ul>
+          <li>Add Employee
+            <ul class="nested">
+              <li>Step-1: Basic Information</li>
+              <li>Step-2: Official Information</li>
+              <li>Step-3: Address Information</li>
+              <li>Step-4: Educational Information</li>
+              <li>Step-5: Experience History</li>
+              <li>Step-6: Training &amp; Professional Certification</li>
+              <li>Step-7: Skill(s)</li>
+              <li>Step-8: Family &amp; Nominee Details</li>
+              <li>Step-9: References</li>
+              <li>Step-10: Transportation Vehicle Support</li>
+            </ul>
+          </li>
+          <li>Observation Employee Data
+            <ul class="nested">
+              <li>Step-1: Basic Information</li>
+              <li>Step-2: Official Information</li>
+              <li>Step-3: Address Information</li>
+              <li>Step-4: References</li>
+              <li>Step-5: File Upload System</li>
+            </ul>
+          </li>
+          <li>Contractual Employee Data
+            <ul class="nested">
+              <li>Step-1: Basic Information</li>
+              <li>Step-2: Official Information</li>
+              <li>Step-3: Address Information</li>
+              <li>Step-4: References</li>
+              <li>Step-5: File Upload System</li>
+            </ul>
+          </li>
+          <li>Manage Employee</li>
+          <li>Manage Contractual Employee</li>
+          <li>Employee Agreement Management</li>
+          <li>Employee Service History (Lifecycle)</li>
+          <li>Employee Accommodation Facility Manage</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Performance Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Performance Management<span class="count">(5)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Status Review &amp; Upgradation</li>
+          <li>Employee Job Description</li>
+          <li>Employee KPI</li>
+          <li>Employee Evaluation &amp; Appraisal Process</li>
+          <li>Increment &amp; Promotion Management</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Attendance Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Attendance Management<span class="count">(8)</span></button>
+      <div class="items">
+        <ul>
+          <li>Holiday Configuration</li>
+          <li>Manage Special Holiday Duty</li>
+          <li>Shift Configuration</li>
+          <li>Shift &amp; Roster Assignment</li>
+          <li>Manage Attendance (Manual)</li>
+          <li>Manage Attendance Correction</li>
+          <li>Manage Late Attendance Reconsideration</li>
+          <li>Visit / Outdoor Work</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Leave Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Leave Management<span class="count">(6)</span></button>
+      <div class="items">
+        <ul>
+          <li>Leave Setup</li>
+          <li>Leave Head Setup</li>
+          <li>Leave Policy Configuration</li>
+          <li>Leave Assignment</li>
+          <li>Leave Application <span class="badge">Apply for Leave Form</span></li>
+          <li>Early Out System</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Logistics Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Logistics Management<span class="count">(2)</span></button>
+      <div class="items">
+        <ul>
+          <li>Requisition Management</li>
+          <li>Employee Logistics
+            <ul class="nested">
+              <li>Step 1: Item &amp; Inventory Management</li>
+              <li>Step 2: Employee Assignment &amp; Returns</li>
+              <li>Step 3: Reporting</li>
+              <li>Step 4: Employee Requisition Process <span class="badge">New Section</span></li>
+              <li>Step 5: Notifications <span class="badge">New Section</span></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- OT/SP allowance Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">OT/SP Allowance Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage OT/SP Allowance</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Corporate SIM Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Corporate SIM Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>SIM Card Manage</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Provident Fund Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Provident Fund Management<span class="count">(3)</span></button>
+      <div class="items">
+        <ul>
+          <li>Provident Fund Policy Config.</li>
+          <li>Manage Provident Fund</li>
+          <li>Manage PF Settlement, Loan &amp; Withdrawal</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Medical Treatment Record Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Medical Treatment Record Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Medical Treatment Record</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Grievance and Disciplinary Action Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Grievance &amp; Disciplinary Action Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Relations &amp; Compliance</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Meal Facility Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Meal Facility Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Meal System</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Notice Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Notice Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Notice</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Training/Meeting Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Training / Meeting Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Manage Training / Meeting</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Payroll Management (Module) -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Payroll Management<span class="count">(9)</span></button>
+      <div class="items">
+        <ul>
+          <li>Salary Structure Setup</li>
+          <li>Salary Sheet Generation</li>
+          <li>Payslip Generation &amp; Disbursement</li>
+          <li>Salary Reconciliation (Payroll Adjustment &amp; Request Handling)</li>
+          <li>Salary Arrear Process</li>
+          <li>Bonus Policy Configuration</li>
+          <li>Bonus Generation &amp; Disbursement</li>
+          <li>Manage Salary Contribution</li>
+          <li>TA/DA Management</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Loan Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Loan Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Salary Advance &amp; Long Term Loan</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Letter Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Letter Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Letter</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Transfer Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Transfer Management<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Transfer Request Register</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Employee Offboarding Management -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Employee Offboarding Management<span class="count">(4)</span></button>
+      <div class="items">
+        <ul>
+          <li>Employee Separation Management</li>
+          <li>Employee Clearance Management</li>
+          <li>Employee Exit Interview</li>
+          <li>Final Settlement Management</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Reports (from Reporting Scope - Future) -->
+    <section class="group">
+      <button type="button" aria-expanded="false">Reports<span class="count">(1)</span></button>
+      <div class="items">
+        <ul>
+          <li>Reporting Scope (Future)</li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <p class="note">Notes: Only functional modules from the BRS are included. Document sections and NFRs are excluded from the software menu.</p>
+
+  <script>
+    // Simple accordion behaviour
+    document.querySelectorAll('.group > button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const items = btn.nextElementSibling;
+        const open = items.classList.toggle('open');
+        btn.setAttribute('aria-expanded', String(open));
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API List with Time — V2 (64 CRUD APIs Done)</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.5; color: #222; }
+    h1, h2, h3 { margin: 0.6rem 0; }
+    .meta { color: #555; font-size: 0.95rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f7f7f7; text-align: left; }
+    code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    .section { margin-top: 2rem; }
+    .legend, .totals, .controls { background: #fbfbfb; border: 1px solid #eee; padding: 0.8rem; }
+    .status-done { color: #0a7a0a; font-weight: bold; }
+    .status-pending { color: #c25d00; font-weight: bold; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
+    textarea { width: 100%; min-height: 90px; }
+    button { padding: 6px 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>API List with Time — V2</h1>
+  <p class="meta">
+    This version assumes 64 CRUD APIs are already implemented (from Sheet "APIList1"). Paste the completed table names below to mark them as done and recalculate remaining effort.
+  </p>
+
+  <div class="legend">
+    <h3>Legend: Endpoint Shapes and Dev Time by Category</h3>
+    <ul>
+      <li>POST <code>/{table}</code> — Create</li>
+      <li>GET <code>/{table}</code> — List with pagination/filter/sort</li>
+      <li>GET <code>/{table}/{id}</code> — Read by ID</li>
+      <li>PUT/PATCH <code>/{table}/{id}</code> — Update</li>
+      <li>DELETE <code>/{table}/{id}</code> — Soft/hard delete as applicable</li>
+    </ul>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Create (h)</th>
+          <th>List (h)</th>
+          <th>Get (h)</th>
+          <th>Update (h)</th>
+          <th>Delete (h)</th>
+          <th>Total per Table (h)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Simple (Lookup/Master)</td>
+          <td>1.0</td>
+          <td>0.75</td>
+          <td>0.5</td>
+          <td>1.0</td>
+          <td>0.75</td>
+          <td>4.0</td>
+        </tr>
+        <tr>
+          <td>Complex (Transactional/Employee/Attendance/Leave/Logistics)</td>
+          <td>2.0</td>
+          <td>1.5</td>
+          <td>1.0</td>
+          <td>2.0</td>
+          <td>1.5</td>
+          <td>8.0</td>
+        </tr>
+        <tr>
+          <td>Highly Complex (Payroll/Financial)</td>
+          <td>3.0</td>
+          <td>2.0</td>
+          <td>1.0</td>
+          <td>3.0</td>
+          <td>2.0</td>
+          <td>11.0</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="controls">
+    <h3>Mark Completed APIs</h3>
+    <div class="grid">
+      <label for="completedInput">Paste comma-separated table names completed per "APIList1" (e.g., countries, divisions, users):</label>
+      <textarea id="completedInput" placeholder="countries, divisions, users, ..."></textarea>
+      <button id="applyBtn">Apply Completed List</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <h3>Import Tables From Google Sheet (Source of Truth)</h3>
+    <div class="grid">
+      <label for="sheetUrl">Google Sheet URL (use the "SortedTables1" or desired sheet gid):</label>
+      <textarea id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/edit?gid=6918758#gid=6918758">https://docs.google.com/spreadsheets/d/1-MGH02bLqHl4TFx930x-5vzirS51z8oZETILldTRa7E/edit?gid=6918758#gid=6918758</textarea>
+      <button id="fetchSheetBtn">Fetch Sheet</button>
+
+      <label for="sheetColumnSelect">Select column that contains table names:</label>
+      <select id="sheetColumnSelect"></select>
+      <button id="applySheetColumnBtn" disabled>Apply Selected Column</button>
+
+      <label for="allTablesManual">Or paste ALL table names from the sheet (comma or newline separated):</label>
+      <textarea id="allTablesManual" placeholder="countries\ndivisions\nusers\n..."></textarea>
+      <button id="applyAllTablesBtn">Apply All Tables (Manual)</button>
+      <p class="meta">We will calculate ONLY for tables present in the sheet list, and exclude those you marked completed above. Unknown/unclassified tables will be shown separately with 0.0 hours (no guessing).</p>
+    </div>
+  </div>
+
+  <div class="totals" id="globalTotals"></div>
+
+  <div id="content"></div>
+
+  <script>
+    const sections = [
+      { name: 'HR Admin — Master Data', items: [
+        ['countries','Simple',4.0],['divisions','Simple',4.0],['districts','Simple',4.0],['upazilas','Simple',4.0],
+        ['branches','Simple',4.0],['departments','Simple',4.0],['sections','Simple',4.0],['subsections','Simple',4.0],
+        ['units','Simple',4.0],['genders','Simple',4.0],['religion','Simple',4.0],['bank_names','Simple',4.0],
+        ['bank_branches','Simple',4.0],['letter_types','Simple',4.0],['notice_categories','Simple',4.0],
+        ['holiday_types','Simple',4.0],['expense_heads','Simple',4.0],['expense_categories','Simple',4.0],
+        ['user_types','Simple',4.0]
+      ]},
+      { name: 'HR Admin — Employee Core', items: [
+        ['employee_basic_information','Complex',8.0],['employee_official_information','Complex',8.0],
+        ['employee_addresses','Complex',8.0],['phone_numbers','Complex',8.0],['employee_types','Complex',8.0],
+        ['employee_family_nominee','Complex',8.0],['employee_references','Complex',8.0],['user_settings','Complex',8.0],
+        ['users','Complex',8.0],['companies','Simple',4.0],['business_settings','Simple',4.0]
+      ]},
+      { name: 'HR Admin — Education & Training', items: [
+        ['education_levels','Simple',4.0],['exam_degree_titles','Simple',4.0],['education_boards_universities','Simple',4.0],
+        ['education_groups_subjects','Simple',4.0],['employee_educations','Complex',8.0],['employee_trainings','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Attendance', items: [
+        ['employee_attendance','Complex',8.0],['meal_pauses','Complex',8.0],['shifts','Complex',8.0],['rosters','Complex',8.0],
+        ['roster_assignments','Complex',8.0],['weekly_off_settings','Complex',8.0],['late_attendance_records','Complex',8.0],
+        ['early_out_requests','Complex',8.0],['employee_applied_attendance_corrections','Complex',8.0],
+        ['employee_ot_data','Complex',8.0],['employee_ot_policies','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Leave', items: [
+        ['leave_heads','Complex',8.0],['leave_policies','Complex',8.0],['leave_policy_details','Complex',8.0],
+        ['leave_applications','Complex',8.0],['leave_carry_forwards','Complex',8.0],['leave_balance_transfers','Complex',8.0],
+        ['employee_leave_balances','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Payroll & Finance', items: [
+        ['salary_grades','Highly Complex',11.0],['payroll_structure','Highly Complex',11.0],['payroll_salary_heads','Highly Complex',11.0],
+        ['payroll_salary_head_category','Highly Complex',11.0],['payroll_salary_sheet_heads','Highly Complex',11.0],
+        ['payroll_salary_sheet_heads_temp','Highly Complex',11.0],['payroll_salary_sheet','Highly Complex',11.0],
+        ['payroll_salary_sheet_temp','Highly Complex',11.0],['payroll_pre_salary_sheet_deductions','Highly Complex',11.0],
+        ['payroll_accrued_allowance_income','Highly Complex',11.0],['recommanded_salary','Highly Complex',11.0],
+        ['payments','Highly Complex',11.0],['payroll_salary_advance_n_loans','Highly Complex',11.0],
+        ['payroll_salary_loan_advance_n_other_installments','Highly Complex',11.0]
+      ]},
+      { name: 'HR Admin — Provident Fund', items: [
+        ['employee_pf_policy','Complex',8.0],['employee_pf_contribution','Complex',8.0],
+        ['employee_contribution_issues','Complex',8.0],['employee_contribution_responses','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Assets & Logistics', items: [
+        ['company_assets_category','Complex',8.0],['company_assets_inventory','Complex',8.0],
+        ['company_assets_serials','Complex',8.0],['company_assets_purchase','Complex',8.0],
+        ['company_assets_distribution','Complex',8.0],['accomodation_locations','Simple',4.0],
+        ['accommodation_requests','Complex',8.0],['accommodation_allocations','Complex',8.0],
+        ['accommodation_maintenance','Complex',8.0],['visit_requests','Complex',8.0],['visit_tracking','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Evaluation & Performance', items: [
+        ['evaluation_templates','Complex',8.0],['evaluation_questions','Complex',8.0],['evaluation_answers','Complex',8.0],
+        ['other_evaluation_types','Simple',4.0],['other_evaluation_results','Complex',8.0],['evaluatee_list','Complex',8.0],
+        ['evaluatee_recommandation_list','Complex',8.0],['recommandation_name_list','Simple',4.0],
+        ['evaluation_template_questions','Complex',8.0],['meetings','Complex',8.0],['letter_types','Simple',4.0],
+        ['letter_templates','Complex',8.0],['employee_letters','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Holidays & Notices', items: [
+        ['holidays','Complex',8.0],['holiday_facilities','Complex',8.0],['holiday_duty_assignments','Complex',8.0],
+        ['holiday_duty_requisition','Complex',8.0],['holiday_duty_requisition_detail','Complex',8.0],
+        ['notices','Complex',8.0],['notice_categories','Simple',4.0]
+      ]},
+      { name: 'HR Admin — Employee Relations / PR', items: [
+        ['pr_problem_categories','Simple',4.0],['pr_problem_sub_categories','Simple',4.0],
+        ['pr_problem_register','Complex',8.0],['pr_committee','Complex',8.0],
+        ['pr_committee_judge_n_members','Complex',8.0],['pr_committee_judgement_report','Complex',8.0],
+        ['pr_problem_register_accoused_persons','Complex',8.0],['pr_committee_witnesses','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Agreements & Notifications', items: [
+        ['agreement_templates','Complex',8.0],['letter_templates','Complex',8.0],['employee_agreements','Complex',8.0],
+        ['notifications','Simple',4.0],['user_distribution_n_acknowledgement_log','Simple',4.0]
+      ]},
+      { name: 'HR Admin — Medical & Welfare', items: [
+        ['employee_medical_records','Complex',8.0],['employee_medical_followups','Complex',8.0],
+        ['employee_medical_urgency_types','Simple',4.0],['employee_ta_da','Complex',8.0],
+        ['employee_ta_da_expense_breakdowns','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Recruitment & Separation', items: [
+        ['jobs','Complex',8.0],['separation_applications','Complex',8.0],['separation_types','Simple',4.0],
+        ['increment_promotion_batches','Complex',8.0],['increment_promotion_history','Complex',8.0],
+        ['increment_promotion_records','Complex',8.0],['employee_designations','Complex',8.0],
+        ['employee_designation_levels','Complex',8.0]
+      ]},
+      { name: 'HR Admin — Visits & Media', items: [
+        ['visit_requests','Complex',8.0],['visit_tracking','Complex',8.0],['media_uploads','Complex',8.0],
+        ['media_upload_usage','Complex',8.0],['media_servers','Complex',8.0]
+      ]},
+      { name: 'CRM Backend', items: [
+        ['crm_groups','Complex',8.0],['territory_incharges','Complex',8.0]
+      ]}
+      // Reporting Backend omitted (TBD)
+    ];
+
+    const state = { done: new Set(), sheetTables: new Set(), sheetHeaders: [], sheetRows: [] };
+
+    function normalize(name){ return String(name).trim().toLowerCase(); }
+
+    function applyCompletedList() {
+      const raw = document.getElementById('completedInput').value;
+      const parts = raw.split(',');
+      state.done = new Set(parts.map(normalize).filter(Boolean));
+      render();
+    }
+
+    // Google Sheet helpers (uses gviz endpoint). If the sheet is not public or blocked by CORS, use manual paste.
+    function parseSheetUrl(url) {
+      try {
+        const u = new URL(url.trim());
+        const parts = u.pathname.split('/');
+        const sheetIdIdx = parts.indexOf('d') + 1;
+        const sheetId = parts[sheetIdIdx];
+        const gid = (u.searchParams.get('gid') || (u.hash.includes('gid=') ? u.hash.split('gid=')[1] : '0')).replace('#','');
+        return { sheetId, gid };
+      } catch(e) { return null; }
+    }
+
+    async function fetchSheet() {
+      const url = document.getElementById('sheetUrl').value;
+      const parsed = parseSheetUrl(url);
+      if (!parsed) { alert('Invalid Google Sheet URL'); return; }
+      const gviz = `https://docs.google.com/spreadsheets/d/${parsed.sheetId}/gviz/tq?tqx=out:json&gid=${parsed.gid}`;
+      try {
+        const res = await fetch(gviz, { mode: 'cors' });
+        const text = await res.text();
+        const jsonStr = text.replace(/^.*setResponse\(/, '').replace(/\);\s*$/, '');
+        const data = JSON.parse(jsonStr);
+        const headers = data.table.cols.map(c => c.label || c.id || '').map(h => h.trim());
+        const rows = data.table.rows.map(r => r.c.map(cell => (cell && cell.v != null ? String(cell.v) : '').trim()));
+        state.sheetHeaders = headers;
+        state.sheetRows = rows;
+        const select = document.getElementById('sheetColumnSelect');
+        select.innerHTML = headers.map((h, idx) => `<option value="${idx}">${h || 'Column ' + (idx+1)}</option>`).join('');
+        document.getElementById('applySheetColumnBtn').disabled = headers.length === 0;
+        alert(`Fetched sheet with ${headers.length} columns and ${rows.length} rows.`);
+      } catch(err) {
+        console.error(err);
+        alert('Failed to fetch sheet. If the sheet is private or blocked by CORS, use manual paste of ALL table names.');
+      }
+    }
+
+    function applySheetColumn() {
+      const idx = parseInt(document.getElementById('sheetColumnSelect').value, 10);
+      const names = state.sheetRows.map(r => r[idx]).map(normalize).filter(Boolean);
+      state.sheetTables = new Set(names);
+      render();
+    }
+
+    function applyAllTablesManual() {
+      const raw = document.getElementById('allTablesManual').value;
+      const parts = raw.split(/[,\n]/);
+      state.sheetTables = new Set(parts.map(normalize).filter(Boolean));
+      render();
+    }
+
+    function render() {
+      let html = '';
+      let totalDevAll = 0, totalDevRemaining = 0, totalCount = 0, completedCount = 0;
+
+      // Known tables by section
+      const knownTables = new Map();
+      sections.forEach(sec => {
+        sec.items.forEach(([table,cat,hours]) => knownTables.set(normalize(table), { table, cat, hours, section: sec.name }));
+      });
+
+      // Decide set of tables to show: if sheetTables provided, show intersection of known tables and sheet; also collect unknowns from sheet.
+      const useSheet = state.sheetTables && state.sheetTables.size > 0;
+      const unknownFromSheet = [];
+
+      sections.forEach(sec => {
+        html += `<div class="section"><h2>${sec.name}</h2>`;
+        html += `<table><thead><tr><th>Table</th><th>Category</th><th>Dev Time (h)</th><th>Status</th></tr></thead><tbody>`;
+        let sectionDev = 0, sectionRemaining = 0;
+        sec.items.forEach(([table,cat,hours]) => {
+          if (useSheet) {
+            // Only include if present in sheet list
+            if (!state.sheetTables.has(normalize(table))) { return; }
+          }
+          totalDevAll += hours; sectionDev += hours; totalCount++;
+          const isDone = state.done.has(normalize(table));
+          if (isDone) { completedCount++; } else { totalDevRemaining += hours; sectionRemaining += hours; }
+          const status = isDone ? '<span class="status-done">Done</span>' : '<span class="status-pending">Pending</span>';
+          html += `<tr><td>${table}</td><td>${cat}</td><td>${hours.toFixed(1)}</td><td>${status}</td></tr>`;
+        });
+        html += `</tbody></table>`;
+        html += `<div class="totals"><strong>${sec.name} Totals:</strong> Planned ${sectionDev.toFixed(1)} h; Remaining ${sectionRemaining.toFixed(1)} h</div>`;
+        html += `</div>`;
+      });
+
+      // If using sheet, capture unknown tables that aren't in our known mapping and list them as Unclassified with 0.0 hours.
+      if (useSheet) {
+        state.sheetTables.forEach(t => { if (!knownTables.has(t)) unknownFromSheet.push(t); });
+        if (unknownFromSheet.length) {
+          html += `<div class="section"><h2>Unclassified (from Google Sheet)</h2>`;
+          html += `<table><thead><tr><th>Table</th><th>Category</th><th>Dev Time (h)</th><th>Status</th></tr></thead><tbody>`;
+          unknownFromSheet.forEach(u => {
+            const isDone = state.done.has(u);
+            const status = isDone ? '<span class="status-done">Done</span>' : '<span class="status-pending">Pending</span>';
+            totalCount++;
+            if (isDone) { completedCount++; }
+            html += `<tr><td>${u}</td><td>Unclassified</td><td>0.0</td><td>${status}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+          html += `<div class="totals"><strong>Unclassified Totals:</strong> Planned 0.0 h; Remaining 0.0 h</div>`;
+          html += `</div>`;
+        }
+      }
+
+      const global = document.getElementById('globalTotals');
+      global.innerHTML = `<strong>Global:</strong> Tables ${totalCount}, Completed ${completedCount}. Planned Dev ${totalDevAll.toFixed(1)} h; Remaining Dev ${totalDevRemaining.toFixed(1)} h.`;
+      document.getElementById('content').innerHTML = html;
+    }
+
+    document.getElementById('applyBtn').addEventListener('click', applyCompletedList);
+    document.getElementById('fetchSheetBtn').addEventListener('click', fetchSheet);
+    document.getElementById('applySheetColumnBtn').addEventListener('click', applySheetColumn);
+    document.getElementById('applyAllTablesBtn').addEventListener('click', applyAllTablesManual);
+    render();
+  </script>
+</body>
+</html>

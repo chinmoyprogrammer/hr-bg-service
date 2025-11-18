@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MBW HRM — Backend API Development Schedule (CRUD-first)</title>
+  <style>
+    body {font-family: Arial, sans-serif; line-height: 1.5; color: #222; margin: 24px;}
+    h1, h2, h3 {margin: 0.6em 0 0.3em;}
+    h1 {font-size: 24px;}
+    h2 {font-size: 18px;}
+    h3 {font-size: 16px;}
+    p {margin: 0.4em 0;}
+    .muted {color: #666;}
+    .card {border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 16px 0;}
+    .grid {display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;}
+    ul {margin: 0.3em 0 0.6em 1em;}
+    code {background: #f7f7f7; padding: 2px 4px; border-radius: 4px;}
+    table {width: 100%; border-collapse: collapse; margin: 10px 0;}
+    th, td {border: 1px solid #ddd; padding: 8px; vertical-align: top;}
+    th {background: #fafafa;}
+    .week {border-left: 4px solid #0078d4; padding-left: 12px; margin: 16px 0;}
+    .badge {display: inline-block; background: #eef6ff; color: #004a86; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin-left: 8px;}
+    .checklist li {margin-bottom: 4px;}
+  </style>
+  <meta name="description" content="CRUD-first, backend-only API development schedule aligned to the MBW HRM BRS. 5 months (20 weeks), 24 days/month, 8 hours/day.">
+</head>
+<body>
+  <h1>MBW HRM — Backend API Development Schedule (CRUD-first)</h1>
+  <p class="muted">Timeframe: <strong>5 months</strong> ≈ <strong>20 weeks</strong> • Capacity: <strong>24 days/month × 8h/day × 5 months = 960h</strong></p>
+
+  <div class="card">
+    <h2>Scope & Assumptions (Backend-only)</h2>
+    <ul>
+      <li>Focus on <strong>simple CRUD APIs</strong> for entities listed in BRS and Sheets: <code>SortedTables1</code> (tables) and <code>APIList1</code> (endpoints).</li>
+      <li>Services already running: <code>api-gateway</code>, <code>auth</code>, <code>crm</code>, <code>hrm</code>, <code>notification</code>, <code>rabbitmq</code>, <code>redis</code>, <code>reporting</code>.</li>
+      <li>Primary implementation targets: <code>hr-admin-backend</code>, <code>crm-backend</code>, <code>reporting-backend</code> (and <code>reporting-backend-go/nodejs</code> where applicable). All APIs exposed behind <code>api-gateway-docker-micro-service</code>.</li>
+      <li>Each API set delivers: Create, Read (list/detail), Update, Delete, server-side pagination/filter/sort, audit fields, standard error format.</li>
+      <li>Demo-first approach: weekly target includes seed data, Postman/cURL scripts, and gateway route checks.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Methodology</h2>
+    <ul>
+      <li><strong>Weekly cadence (20 weeks)</strong> targeting API groups aligned to “pages” in the BRS.</li>
+      <li><strong>Standard contracts</strong> from <code>APIList1</code>; entities from <code>SortedTables1</code>.</li>
+      <li><strong>Consistent API shape:</strong> <code>GET /v1/{entity}</code>, <code>GET /v1/{entity}/{id}</code>, <code>POST /v1/{entity}</code>, <code>PUT /v1/{entity}/{id}</code>, <code>DELETE /v1/{entity}/{id}</code>.</li>
+      <li><strong>Definition of done per week:</strong> endpoints, validation, RBAC middleware, audit logging, pagination, error normalization, gateway mapping, demo scripts.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Demonstration Method (Backend)</h2>
+    <p>For each API group (corresponding to a page), demonstrate:</p>
+    <ul class="checklist">
+      <li>Create: <code>POST</code> returns <code>201</code> with resource; validates required fields; audit fields set.</li>
+      <li>List: <code>GET</code> supports <code>?page,size,sort,filter,q</code>; returns <code>200</code> with pagination meta.</li>
+      <li>Detail/Update: <code>GET/{id}</code> and <code>PUT/{id}</code> return <code>200</code>; preserves audit trail.</li>
+      <li>Delete: <code>DELETE/{id}</code> returns <code>204</code> (or <code>200</code> with body) and enforces soft-delete if policy.</li>
+      <li>RBAC: verify access by role via <code>auth</code> middleware and claims; deny returns <code>403</code>.</li>
+      <li>Error format: <code>{ errorCode, message, details }</code> with consistent HTTP status codes.</li>
+      <li>Gateway: route registered under <code>/api/v1</code>; CORS and rate-limiting configured.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Weekly Plan (Page-by-Page APIs)</h2>
+    <p class="muted">Each week targets fully demo-able backend APIs that correspond to BRS pages. Use <code>APIList1</code> for endpoint names and <code>SortedTables1</code> for table/entity definitions.</p>
+
+    <div class="week">
+      <h3>Week 1 — Backend Foundations <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li>API versioning (<code>/api/v1</code>) and error format standardization.</li>
+        <li>RBAC middleware enforcement in <code>hr-admin-backend</code> and <code>crm-backend</code>.</li>
+        <li>Audit (createdBy/At, updatedBy/At) and soft-delete patterns.</li>
+        <li>Pagination, sorting, filtering utilities (shared lib).</li>
+        <li>API gateway route mapping, CORS, rate-limiting, request logging.</li>
+        <li>Postman/cURL base collection and environment setup.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 2 — Company & Org Setup (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Companies — <code>GET/POST/PUT/DELETE /v1/companies</code>.</li>
+        <li><code>hr-admin-backend</code>: Branches — <code>... /v1/branches</code>.</li>
+        <li><code>hr-admin-backend</code>: Dropdown Option Groups/Items — <code>... /v1/option-groups</code>, <code>... /v1/option-items</code>.</li>
+        <li>Gateway mapping and cURL/Postman demo scripts.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 3 — Org Setup (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Departments — <code>/v1/departments</code>.</li>
+        <li><code>hr-admin-backend</code>: Sections — <code>/v1/sections</code>.</li>
+        <li><code>hr-admin-backend</code>: Sub-Sections — <code>/v1/sub-sections</code>.</li>
+        <li><code>hr-admin-backend</code>: Approver Hierarchies — <code>/v1/approver-hierarchies</code>, level definitions, assignments.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 4 — Address & Education Config APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Divisions — <code>/v1/divisions</code>.</li>
+        <li><code>hr-admin-backend</code>: Districts — <code>/v1/districts</code>.</li>
+        <li><code>hr-admin-backend</code>: Upazila/Thana — <code>/v1/upazilas</code>.</li>
+        <li><code>hr-admin-backend</code>: Education — <code>/v1/degree-titles</code>, <code>/v1/boards</code>, <code>/v1/subjects</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 5 — Employee Master (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Designation Levels — <code>/v1/designation-levels</code>.</li>
+        <li><code>hr-admin-backend</code>: Designations — <code>/v1/designations</code>.</li>
+        <li><code>hr-admin-backend</code>: Employees — master list/detail — <code>/v1/employees</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 6 — Employee Onboarding (Steps 1–5) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: <code>/v1/employees/:id/basic-info</code>, <code>official-info</code>, <code>address-info</code>, <code>education-info</code>, <code>experience-history</code>.</li>
+        <li>Validation rules, transactional saves, audit.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 7 — Employee Onboarding (Steps 6–10) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: <code>/v1/employees/:id/training</code>, <code>skills</code>, <code>family</code>, <code>nominees</code>, <code>references</code>, <code>vehicles</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 8 — Employee Types & Management APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Observation Employees — sub-resources.</li>
+        <li><code>hr-admin-backend</code>: Contractual Employees — sub-resources.</li>
+        <li><code>hr-admin-backend</code>: Employee management endpoints — profile view/edit.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 9 — Employee Lifecycle APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Agreements — <code>/v1/employees/:id/agreements</code>.</li>
+        <li><code>hr-admin-backend</code>: Service lifecycle — <code>/v1/employees/:id/service-history</code>.</li>
+        <li><code>hr-admin-backend</code>: Accommodation — <code>/v1/employees/:id/accommodation</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 10 — Performance (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Job Descriptions — <code>/v1/job-descriptions</code>.</li>
+        <li><code>hr-admin-backend</code>: KPIs — <code>/v1/kpis</code>.</li>
+        <li><code>hr-admin-backend</code>: Status Review & Upgradation — endpoints for review cycles.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 11 — Performance (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Evaluations & Appraisals — <code>/v1/appraisals</code> with phases and outcomes.</li>
+        <li><code>hr-admin-backend</code>: Increments & Promotions — <code>/v1/increments</code>, <code>/v1/promotions</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 12 — Attendance (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Holidays — <code>/v1/holidays</code>.</li>
+        <li><code>hr-admin-backend</code>: Special Duty — <code>/v1/special-duties</code>.</li>
+        <li><code>hr-admin-backend</code>: Shifts — <code>/v1/shifts</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 13 — Attendance (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Roster — <code>/v1/rosters</code> and assignments.</li>
+        <li><code>hr-admin-backend</code>: Manual Attendance — <code>/v1/attendance</code>.</li>
+        <li><code>hr-admin-backend</code>: Corrections — <code>/v1/attendance-corrections</code>.</li>
+        <li><code>hr-admin-backend</code>: Late Reconsiderations — <code>/v1/late-reconsiderations</code>.</li>
+        <li><code>hr-admin-backend</code>: Outdoor Work — <code>/v1/outdoor-works</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 14 — Leave (Part 1) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Leave Heads — <code>/v1/leave-heads</code>.</li>
+        <li><code>hr-admin-backend</code>: Leave Policies — <code>/v1/leave-policies</code>.</li>
+        <li><code>hr-admin-backend</code>: Leave Assignments — <code>/v1/leave-assignments</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 15 — Leave (Part 2) APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Leave Applications — <code>/v1/leave-applications</code>.</li>
+        <li><code>hr-admin-backend</code>: Early Out — <code>/v1/early-outs</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 16 — Logistics & Requisition APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Items & Inventory — <code>/v1/items</code>, <code>/v1/inventory</code>.</li>
+        <li><code>hr-admin-backend</code>: Employee Assignments & Returns — <code>/v1/assignments</code>, <code>/v1/returns</code>.</li>
+        <li><code>hr-admin-backend</code>: Requisitions — <code>/v1/requisitions</code>.</li>
+        <li><code>notification-backend</code>: event publishing for CRUD changes (RabbitMQ topics).</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 17 — Allowances & Corporate Assets APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: OT/SP Allowances — <code>/v1/allowances</code>.</li>
+        <li><code>hr-admin-backend</code>: Corporate SIMs — <code>/v1/sims</code>.</li>
+        <li><code>hr-admin-backend</code>: Provident Fund Policies — <code>/v1/pf-policies</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 18 — Provident Fund & Finance APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Provident Fund Management — <code>/v1/provident-funds</code>.</li>
+        <li><code>hr-admin-backend</code>: PF Settlement/Withdrawal — <code>/v1/pf-settlements</code>, <code>/v1/pf-withdrawals</code>.</li>
+        <li><code>hr-admin-backend</code>: Salary Advance & Long Term Loans — <code>/v1/loans</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 19 — People Ops & Training APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Medical Treatment Records — <code>/v1/medical-records</code>.</li>
+        <li><code>hr-admin-backend</code>: Grievance & Disciplinary — <code>/v1/grievances</code>, <code>/v1/disciplinary-actions</code>.</li>
+        <li><code>hr-admin-backend</code>: Meal Facilities — <code>/v1/meals</code>.</li>
+        <li><code>hr-admin-backend</code>: Notices — <code>/v1/notices</code>.</li>
+        <li><code>hr-admin-backend</code>: Training/Meetings — <code>/v1/trainings</code>, <code>/v1/meetings</code>.</li>
+      </ul>
+    </div>
+
+    <div class="week">
+      <h3>Week 20 — Payroll & Exit Ops + QA/Reporting APIs <span class="badge">~40–48h</span></h3>
+      <ul>
+        <li><code>hr-admin-backend</code>: Payroll — <code>/v1/salary-structures</code>, <code>/v1/salary-sheets</code>, <code>/v1/payslips</code>, <code>/v1/reconciliations</code>, <code>/v1/arrears</code>, <code>/v1/bonus-policies</code>, <code>/v1/bonuses</code>, <code>/v1/salary-contributions</code>.</li>
+        <li><code>hr-admin-backend</code>: Loan Management — <code>/v1/loans</code>.</li>
+        <li><code>hr-admin-backend</code>: Employee Letters — <code>/v1/employee-letters</code>.</li>
+        <li><code>hr-admin-backend</code>: Transfers — <code>/v1/transfers</code>.</li>
+        <li><code>hr-admin-backend</code>: Offboarding — <code>/v1/separations</code>, <code>/v1/clearances</code>, <code>/v1/exit-interviews</code>, <code>/v1/final-settlements</code>.</li>
+        <li><code>reporting-backend</code>: KPI endpoints and list/report summaries; QA hardening.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>API Deliverable Definition (CRUD-first)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>API Aspect</th>
+          <th>Definition of Done</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Create</td>
+          <td><code>POST</code> returns <code>201</code>; validates required fields; sets audit fields; emits events where needed.</td>
+        </tr>
+        <tr>
+          <td>List</td>
+          <td>Server-side pagination; sorting; keyword search; column filters; response includes meta (<code>total,page,size</code>).</td>
+        </tr>
+        <tr>
+          <td>Update</td>
+          <td><code>PUT</code> returns <code>200</code>; idempotent; audit fields updated; business validation applied.</td>
+        </tr>
+        <tr>
+          <td>Delete</td>
+          <td><code>DELETE</code> returns <code>204</code> (or <code>200</code>); soft-delete flags if policy; cascade rules respected.</td>
+        </tr>
+        <tr>
+          <td>RBAC</td>
+          <td>Auth middleware validates roles/permissions; secure defaults; <code>401/403</code> on unauthorized.</td>
+        </tr>
+        <tr>
+          <td>Docs & Demo</td>
+          <td>Postman collection or cURL scripts; demo steps; seed/test data; gateway route verified.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Example Demo Script (Companies API)</h2>
+    <ol>
+      <li>Authenticate and obtain token via <code>auth</code> service.</li>
+      <li>Create: <code>curl -X POST "$GATEWAY/api/v1/companies" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"name":"MBW Ltd","industry":"Manufacturing"}'</code> — expect <code>201</code> with JSON body.</li>
+      <li>List: <code>curl "$GATEWAY/api/v1/companies?page=1&size=10&q=MBW" -H "Authorization: Bearer $TOKEN"</code> — expect <code>200</code> with pagination meta.</li>
+      <li>Update: <code>curl -X PUT "$GATEWAY/api/v1/companies/{id}" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"industry":"Textiles"}'</code> — expect <code>200</code> and audit changed.</li>
+      <li>Delete: <code>curl -X DELETE "$GATEWAY/api/v1/companies/{id}" -H "Authorization: Bearer $TOKEN"</code> — expect <code>204</code> or soft-delete confirmation.</li>
+      <li>RBAC: repeat calls with a role lacking write permission — expect <code>403</code>.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Risks & Buffers</h2>
+    <ul>
+      <li>Complex workflows (Approver hierarchy, Payroll rules) may exceed CRUD scope — timeboxed to core CRUD; advanced logic deferred or stubbed.</li>
+      <li>Data model changes (from <code>SortedTables1</code>) could ripple; schedule includes weekly refactor buffer (4–8h).</li>
+      <li>Integration hiccups across services; provide mock endpoints to unblock dependencies; add gateway retries/backoff if necessary.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Next Steps</h2>
+    <ul>
+      <li>Confirm the entity list in <code>SortedTables1</code> maps 1:1 to weekly API sets above.</li>
+      <li>Lock API specs in <code>APIList1</code> (CRUD endpoints, request/response models) per microservice.</li>
+      <li>Flag workflows needing more than CRUD (Payroll rules, approvals) to adjust estimates early.</li>
+    </ul>
+  </div>
+
+  <p class="muted">Generated backend-only plan — review and adjust based on your Sheets.</p>
+</body>
+</html>

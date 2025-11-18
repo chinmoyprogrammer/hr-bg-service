@@ -1,0 +1,46 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void
+    {
+        Schema::create('employee_contribution_issues', function (Blueprint $table) {
+            $table->bigIncrements('id');
+
+            $table->string('issue_name')->nullable();
+            $table->date('start_date')->nullable();
+            $table->date('end_date')->nullable();
+            $table->unsignedTinyInteger('deduction_type')->nullable(); // 1=day,2=percent,3=fixed amount
+            $table->unsignedTinyInteger('deduction_from')->nullable(); // 1=basic,2=gross
+            $table->decimal('multiplier', 12, 4)->nullable();
+            $table->boolean('is_campaign_finished')->default(false);
+            $table->unsignedTinyInteger('month');
+            $table->unsignedSmallInteger('year');
+
+            $table->unsignedBigInteger('created_user_id');
+            $table->unsignedBigInteger('updated_user_id')->nullable();
+            $table->timestamp('created_at')->useCurrent();
+            $table->timestamp('updated_at')->useCurrent()->nullable();
+            $table->text('remarks')->nullable();
+
+            $table->unsignedBigInteger('deleted_by')->nullable();
+            $table->dateTime('deleted_at')->nullable();
+
+            $table->string('child_data_identifier_key_incoming', 255)->nullable();
+            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+
+            $table->index(['month','year']);
+            $table->foreign('created_user_id')->references('id')->on('users')->onUpdate('cascade')->onDelete('restrict');
+            $table->foreign('updated_user_id')->references('id')->on('users')->onUpdate('cascade')->onDelete('set null');
+            $table->foreign('deleted_by')->references('id')->on('users')->onUpdate('cascade')->onDelete('set null');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('employee_contribution_issues');
+    }
+};

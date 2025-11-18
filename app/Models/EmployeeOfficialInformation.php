@@ -1,0 +1,60 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class EmployeeOfficialInformation extends Model
+{
+    protected $fillable = [
+        'id',
+        'employee_user_id',
+        'company_id',
+        'branch_id',
+        'department_id',
+        'section_id',
+        'sub_section_id',
+        'designation_level_id',
+        'designation_id',
+        'employee_type',
+        'joining_date',
+        'provisioner_days',
+        'confirmation_date',
+        'observation_start_date',
+        'observation_end_date',
+        'observation_days',
+        'reporting_supervisor_user_id',
+        'gross_salary',
+        'ait_eligible',
+        'salary_payment_mode',
+        'cash_pay_amount',
+        'bank_pay_amount',
+        'mobile_pay_amount',
+        'bank_name_id',
+        'branch_name_id',
+        'bank_account_no',
+        'mobile_banking_type',
+        'payment_mobile_number',
+        'facilities',
+        'is_mealable',
+        'is_free_meal',
+        'meal_effective_date',
+        'pay_period_basis',
+        'employee_pf_employer_contribution_balance',
+        'employee_pf_balance',
+        'employee_pf_policy_id',
+        'employee_ot_policy_id',
+        'allotted_mobile_balance',
+        'child_data_identifier_key_incoming',
+        'leave_policy_id',
+        'status',
+        'is_draft',
+        'created_user_id',
+        'created_at',
+        'updated_at',
+        'updated_user_id',
+        'deleted_by',
+        'deleted_at'
+    ];
+}
+
