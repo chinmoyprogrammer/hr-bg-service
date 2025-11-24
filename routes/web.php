@@ -1,9 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\UnitController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\UserTypeController;
+
 
 /** @var \Laravel\Lumen\Routing\Router $router */
 
@@ -18,6 +16,10 @@ use App\Http\Controllers\UserTypeController;
 |
 */
 
+$router->get('/', function () use ($router) {
+    return "Hello";
+});
+
 $router->get('/api', function () use ($router) {
     return $router->app->version();
 });
@@ -26,7 +28,7 @@ Route::group(['prefix' => 'api'], function () {
 
     // CRON==> pull raw data from device to temp table
     // after pulling it pushes data to rabbit mq for further processing by this service again
-    Route::post('/pull-raw-data-from-device-to-temp-table', 'AttendanceController@pullRawDataFromDeviceToTempTable');
+    Route::get('/pull-raw-data-from-device-to-temp-table', 'AttendanceController@pullRawDataFromDeviceToTempTable');
 
     //.... Test RabbitMQ
     Route::post('/publish-rabbitmq', 'RabbitMQController@publishMessage');

@@ -25,6 +25,10 @@ RUN mkdir -p /run/nginx
 RUN echo "#!/bin/sh\n\nwhile true; do\n    inotifywait -r -e modify,create,delete,move --quiet /var/www/html\n    { nginx -s reload & kill -USR2 \"\$(cat /var/run/php-fpm/php-fpm.pid)\" & }\n    sleep 0.05\ndone" > /usr/local/bin/sync-reload.sh && \
     chmod +x /usr/local/bin/sync-reload.sh
 
+# Create queue worker start script (copied and runs at runtime with auto-restart)
+COPY start-worker.sh /usr/local/bin/start-worker.sh
+RUN chmod +x /usr/local/bin/start-worker.sh
+
 # Expose port 80
 EXPOSE 80
 
@@ -79,5 +83,6 @@ CMD sh -c "mkdir -p /var/run/php-fpm && \
     chown -R www-data:www-data /var/www/html && \
     chmod -R 755 /var/www/html && \
     php-fpm -D && \
+    /usr/local/bin/start-worker.sh & \
     /usr/local/bin/sync-reload.sh & \
     nginx -g 'daemon off;'"

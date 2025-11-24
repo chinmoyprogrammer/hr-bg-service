@@ -2,30 +2,44 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessTempDataJob;
 use App\Jobs\RabbitMQJob;
-use App\Models\EmployeeAttendanceTemp;
+use App\Jobs\SmokeJob;
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendancePunchHistory;
+use App\Models\EmployeeAttendanceTemp;
 use App\Models\EmployeeOfficialInformation;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Wire\AMQPTable;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\DB;
 
 class AttendanceController extends Controller
 {
     public function pullRawDataFromDeviceToTempTable(Request $request)
     {
+        Log::info('pullRawDataFromDeviceToTempTable: start', [
+            'query' => [
+                'start_time' => $request->input('start_time'),
+                'end_time' => $request->input('end_time'),
+            ],
+        ]);
         // Device credentials and API endpoint
         $device_user_name = env('DEVICE_USER_NAME');
         $device_password = env('DEVICE_PASSWORD');
         $jwt_api_url = env('JWT_API_URL');
 
-        // get token from api
-        $token = Http::post($jwt_api_url, [
-            'username' => $device_user_name,
-            'password' => $device_password
-        ]);
+        // get token from api (disable SSL verification if needed, no custom handler)
+        $token = Http::timeout(30)
+            ->withOptions([
+                'verify' => false,
+            ])
+            ->post($jwt_api_url, [
+                'username' => $device_user_name,
+                'password' => $device_password
+            ]);
         // output : { "token": "gP4K......biHUoy" }
 
 
@@ -34,62 +48,134 @@ class AttendanceController extends Controller
         $startTime = $request->input('start_time');
         $endTime   = $request->input('end_time');
 
-        $attendance_data = Http::withHeaders([
-            'Content-Type'  => 'application/json',
-            'Authorization' => 'JWT ' . $token->json('token')
-        ])->get($attendanceApiUrl, [
-            'start_time' => $startTime,
-            'end_time'   => $endTime
-        ]);
+        // Increase timeout to 120 seconds and add retry logic to handle transient network issues
+        $attendance_data = Http::timeout(120)
+            ->retry(3, 5000) // 3 retries, 5 second delay between retries
+            ->withHeaders([
+                'Content-Type'  => 'application/json',
+                'Authorization' => 'JWT ' . $token->json('token')
+            ])
+            ->get($attendanceApiUrl, [
+                'start_time' => $startTime,
+                'end_time'   => $endTime,
+                'page'       => 1,
+                'page_size'  => 50000,
+                'departments' => 1,
+                'areas' => [2,3],
+            ]);
+
+        /*
+            sample : output of $attendance_data ->
+                {
+                "count": 1027,
+                "next": null,
+                "previous": null,
+                "msg": "",
+                "code": 0,
+                "data": [
+                    {
+                    "id": 474078,
+                    "emp_code": "0005",
+                    "first_name": "Md. Rajaul Karim",
+                    "last_name": null,
+                    "nick_name": "",
+                    "gender": "Male",
+                    "dept_code": "1",
+                    "dept_name": "Department",
+                    "position_code": null,
+                    "position_name": null,
+                    "work_code": "0",
+                    "att_date": "2025-11-19",
+                    "work_code_alias": "0",
+                    "punch_time": "08:49",
+                    "punch_state": "Check In",
+                    "verify_type": "Face",
+                    "source": "Device"
+                    },
+                    ....
+                    ]
+
+        */
 
         // Return list of attendances
         //return $attendance_data->json();
 
         //insert data to temp table
-        $attendance_data = $attendance_data->json();
+        $responseJson = $attendance_data->json();
 
-        $insert_data = [];
+        $records = [];
+        if (is_array($responseJson)) {
+            $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
+        }
 
-            // Group attendance records by emp_id and date to pair in/out times
-            $grouped = [];
-            foreach ($attendance_data as $record) {
-                $empId = $record['id'];
-                $datetime = \Carbon\Carbon::parse($record['time']);
-                $date = $datetime->toDateString();
+        $grouped = [];
+        foreach ($records as $record) {
+            // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
+            if (!isset($record['emp_code'], $record['att_date'], $record['punch_time'])) {
+                continue;
+            }
+            $empCode = $record['emp_code'];
+            // combine date + time to build proper datetime for temp table
+            $attDate = trim($record['att_date']);
+            $punchTime = trim($record['punch_time']);
+            // Use att_date + punch_time to avoid defaulting to today
+            $datetime = \Carbon\Carbon::parse($attDate.' '.$punchTime);
 
-                $key = $empId . '_' . $date;
-                if (!isset($grouped[$key])) {
-                    $grouped[$key] = [
-                        'emp_id' => $empId,
-                        'in_datetime' => null,
-                        'out_datetime' => null,
-                    ];
-                }
+            $grouped[] = [
+                'emp_code' => $empCode,
+                'punch_datetime' => $datetime->toDateTimeString(),
+            ];
+        }
+        // Prepare bulk insert data for temp table
+        $insert_data = array_values($grouped);
+        Log::info('pullRawDataFromDeviceToTempTable: records fetched', [
+            'count' => is_array($records) ? count($records) : 0,
+        ]);
+        if (!empty($insert_data)) {
+            //...Delete all previous data
+            EmployeeAttendanceTemp::truncate();
+            
+            //...Insert into temp table
+            EmployeeAttendanceTemp::insert($insert_data);
 
-                // Assume first record is "in", second is "out" for the same day
-                if ($grouped[$key]['in_datetime'] === null) {
-                    $grouped[$key]['in_datetime'] = $datetime->toDateTimeString();
-                } else {
-                    $grouped[$key]['out_datetime'] = $datetime->toDateTimeString();
-                }
+            //.... Punch history insert
+            // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
+            $columns = ['emp_code', 'punch_datetime'];
+            $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
+            $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
+
+            $sql = "INSERT INTO employee_attendance_punch_histories (emp_code, punch_datetime) VALUES $values ON DUPLICATE KEY UPDATE $updates";
+
+            // Flatten the data for parameter binding
+            $bindings = [];
+            foreach ($insert_data as $row) {
+                $bindings[] = $row['emp_code'];
+                $bindings[] = $row['punch_datetime'];
             }
 
-            // Prepare bulk insert data
-            $insert_data = array_values($grouped);
-
-            // Bulk insert into EmployeeAttendance table
-            \App\Models\EmployeeAttendanceTemp::insert($insert_data);
+            DB::insert($sql, $bindings);
+            Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
+                'inserted' => count($insert_data),
+            ]);
+        }
 
             
         $payload = [
-            'message' => "",
+            'message' => "HHH",
             'start_date' => $startTime,
             'end_date' => $endTime,
         ];
 
-        $queueName = 'processTempData';
-        dispatch(new RabbitMQJob($payload, $queueName));
-        
+        $queueName = 'processTempData_queue';
+        // Dispatch a proper queued job that a RabbitMQ worker can consume automatically
+        dispatch((new ProcessTempDataJob($payload))
+            ->onQueue($queueName)
+            ->onConnection('rabbitmq'));
+        Log::info('pullRawDataFromDeviceToTempTable: dispatched ProcessTempDataJob', [
+            'queue' => $queueName,
+            'payload' => $payload,
+        ]);
+
 
     }
 
@@ -97,9 +183,12 @@ class AttendanceController extends Controller
      * Consume one message from RabbitMQ queue 'processTempData'.
      * Useful for testing/triggered consumption via HTTP.
      */
+    
+    /*
     public function consumeProcessTempData(Request $request)
     {
-        $queueName = 'processTempData';
+        Log::info('consumeProcessTempData invoked');
+        $queueName = 'processTempData_queue';
 
         // RabbitMQ connection details from env
         $host = env('RABBITMQ_HOST', '127.0.0.1');
@@ -114,9 +203,22 @@ class AttendanceController extends Controller
         // Ensure the queue exists; durable so it matches common setup
         $channel->queue_declare($queueName, false, true, false, false);
 
+        // Bind queue to the default exchange used by the Laravel RabbitMQ driver
+        $exchange = env('RABBITMQ_EXCHANGE', 'amq.direct');
+        try {
+            $channel->queue_bind($queueName, $exchange, $queueName);
+        } catch (\Throwable $e) {
+            // binding can fail if exchange missing; continue so basic_get still works when messages are directly routed
+            Log::warning('Queue bind failed: '.$e->getMessage());
+        }
+
         // Fetch a single message (auto-acknowledge)
         $msg = $channel->basic_get($queueName, true);
-
+        if ($msg) {
+            Log::info('Consumed message: ' . $msg->getBody());
+        } else {
+            Log::info('consumeProcessTempData: queue empty for '.$queueName);
+        }
         $result = null;
         if ($msg === null) {
             $result = [
@@ -152,8 +254,8 @@ class AttendanceController extends Controller
 
                 // Fetch temp rows within range
                 $tempRows = EmployeeAttendanceTemp::query()
-                    ->where('in_datetime', '>=', $startBoundary)
-                    ->where('in_datetime', '<=', $endBoundary)
+                    ->where('punch_datetime', '>=', $startBoundary)
+                    ->where('punch_datetime', '<=', $endBoundary)
                     ->get();
 
                 $systemUserId = (int) env('SYSTEM_USER_ID', 1);
@@ -161,19 +263,17 @@ class AttendanceController extends Controller
                 $skipped = [];
 
                 foreach ($tempRows as $row) {
-                    // Resolve employee_user_id by emp_id from official info
+                    // Resolve employee_user_id by emp_id (matched from device emp_code)
                     $employeeUserId = EmployeeOfficialInformation::query()
-                        ->where('emp_id', $row->emp_id)
+                        ->where('emp_id', $row->emp_code)
                         ->value('employee_user_id');
 
-                    // Choose base date from in_datetime
-                    $dateStr = (new \Carbon\Carbon($row->in_datetime))->toDateString();
-                    $inTime = (new \Carbon\Carbon($row->in_datetime))->format('H:i:s');
-
-                    // Handle possible null out_datetime
-                    $outDt = $row->out_datetime ? new \Carbon\Carbon($row->out_datetime) : null;
-                    $outDate = $outDt ? $outDt->toDateString() : null;
-                    $outTime = $outDt ? $outDt->format('H:i:s') : null;
+                    // Choose base date/time from punch_datetime (temp table has single punch entries)
+                    $dt = new \Carbon\Carbon($row->punch_datetime);
+                    $dateStr = $dt->toDateString();
+                    $inTime = $dt->format('H:i:s');
+                    $outDate = null;
+                    $outTime = null;
 
                     // Find roster_id for employee on date
                     $rosterId = null;
@@ -199,7 +299,7 @@ class AttendanceController extends Controller
                     }
 
                     $prepared[] = [
-                        'card_no' => $row->emp_id,
+                        'card_no' => $row->emp_code,
                         'employee_user_id' => $employeeUserId,
                         'date' => $dateStr,
                         'in_time' => $inTime,
@@ -260,6 +360,7 @@ class AttendanceController extends Controller
 
         return response()->json($result);
     }
+    */
 
 
 }

@@ -57,5 +57,15 @@ class EmployeeOfficialInformation extends Model
         'deleted_by',
         'deleted_at'
     ];
+
+    public $timestamps = false;
+
+
+    public function employeeAttendanceTemps()
+    {
+        return $this->hasMany(EmployeeAttendanceTemp::class, 'emp_code', 'emp_id');
+    }
+
+
 }
 

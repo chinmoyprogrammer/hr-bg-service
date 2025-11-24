@@ -9,7 +9,7 @@ class RabbitMQController extends Controller
 {
     public function publishMessage(Request $request)
     {
-        $queueName = 'notification1';
+        $queueName = 'notification';
         $message = $request->input('message', 'Hello from hr-admin-backend!');
         // Accept multiple shapes: user_ids (array), user_id (single), comma-separated string
         $rawUserIds = $request->input('user_ids');
