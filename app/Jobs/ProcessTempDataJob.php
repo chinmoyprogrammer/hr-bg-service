@@ -2,15 +2,20 @@
 
 namespace App\Jobs;
 
+use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceStatusLog;
+use App\Models\EmployeeAttendanceTemp;
+use App\Models\EmployeeOfficialInformation;
+use App\Models\Holiday;
+use App\Models\LeaveApplicationDetail;
+use App\Models\UserStatusNSettings;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Models\EmployeeAttendanceTemp;
-use App\Models\EmployeeOfficialInformation;
-use App\Models\EmployeeAttendance;
 
 class ProcessTempDataJob extends Job implements ShouldQueue
 {
@@ -45,6 +50,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
         $startBoundary = (new \Carbon\Carbon($startDate))->startOfDay()->toDateTimeString();
         $endBoundary = (new \Carbon\Carbon($endDate))->endOfDay()->toDateTimeString();
+        $jobStart = date('Y-m-d H:i:s');
 
 
         // Get array of dates from two dates provided
@@ -71,17 +77,30 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                      ->orderBy('effective_date', 'desc')
                      ->get()
                      ->keyBy('id');
+        $LeaveApplicationDetails = LeaveApplicationDetail::where('leave_date', '>=', $startDate)
+                     ->where('leave_date', '<=', $endDate)
+                     ->get()
+                     ->keyBy('employee_user_id');
+
+
+        $holidays = Holiday::where('date', '>=', $startDate)
+                     ->where('date', '<=', $endDate)
+                     ->get()
+                     ->keyBy('date');
         
         $systemUserId = (int) env('SYSTEM_USER_ID', 1);
         $prepared = [];
         $skipped = [];
+        $statusLogData = [];
+        $preparedKeys = [];
+        $statusLogKeyIndex = [];
 
 
             // Build one attendance record per date for this employee
             //$grouped = $temps->groupBy(fn($t) => $t->punch_datetime->format('Y-m-d'));
 
             foreach ($officialInfos as $row) {
-
+                $LeaveApplicationDetail = $LeaveApplicationDetails->get($row->employee_user_id);
                 /*
                 //.... # in out time
 
@@ -102,9 +121,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
                 foreach ($dates as $date)
                 {
+                    $now = date('Y-m-d H:i:s');
                     //.... get employee's shift id
                     $shift_id = $row->shift_id ?? null;
                     $shift = $shifts->get($shift_id);
+                    $holiday = $holidays->get($date);
                     
 
 
@@ -127,10 +148,43 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $last  = $row->employeeAttendanceTemps->where('punch_datetime', 'like', $date . '%')->last();
                     }
 
+//................................ Speccial over night checkout for normal shift duty [start] .................................................
+                    if(
+                        $shift->is_overnight == 0 && 
+                        strtotime($date . ' ' . $shift->start_check_in_time) > strtotime($first->punch_datetime)
+                    )
+                    {
+
+                        //... update previous day's checkout date & time
+                        $employeeAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
+                            ->where('date', date('Y-m-d', strtotime($date." -1 day")))
+                            ->whereNotNull('in_time')
+                            ->whereNull('out_time')
+                            ->whereNull('out_date')
+                            ->update([
+                                'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
+                                'out_date' => $date,
+                            ]);
+
+                            //.... update Employee Attendance Status Log data
+                            EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
+                                ->where('employee_attendance_id', $employeeAttendance->id)
+                                ->where('created_at', $now)
+                                ->where('created_user_id', $systemUserId) // Night Duty
+                                ->update([
+                                    'attendance_status' => 12, // Night Duty
+                                ]);
+
+                            continue; // skip this date
+
+                    }
+//................................ Speccial over night checkout for normal shift duty [end] .................................................
+
+
 
 //........................... Night Shift [Start]............................................................................................
                     //..... over night shift (accross 2 dates) [determine checkin time]
-                    if(
+                    if (
                         $shift->is_overnight == 1 && 
                         strtotime($date . ' ' . $shift->start_check_in_time) >= strtotime($first->punch_datetime) && 
                         strtotime($date . ' ' . $shift->end_check_in_time) <= strtotime($last->punch_datetime)
@@ -158,7 +212,15 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             ->update([
                                 'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
                                 'out_date' => $date,
-                                'status_2' => 10, // Night Duty
+                            ]);
+
+                        //.... update Employee Attendance Status Log data
+                        EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
+                            ->where('employee_attendance_id', $employeeAttendance->id)
+                            ->where('created_at', $now)
+                            ->where('created_user_id', $systemUserId) // Night Duty
+                            ->update([
+                                'attendance_status' => 13, // Night Duty
                             ]);
                             continue; // skip this date
                     }
@@ -169,22 +231,74 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $shiftEnd   = $row->clock_out   ?? '18:00:00';
                     $grace      = $shift->shift_grace_time ?? 0;
 
-                    $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime);
+                    $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime) - $shift->lunch_meal_hour;
 
                     $inTime  = $first->punch_datetime->format('H:i:s');
                     $outTime = $last->punch_datetime->format('H:i:s');
-                    
 
-                    // Basic status logic (extend as needed)
-                    $status    = 1; // Present
-                    $status2   = 0;
-                    $onLeave   = 0;
+                    $empCode = $row->emp_code ?? $row->card_no;
+                    $rowKey = $empCode . '|' . $row->employee_user_id . '|' . $date . '|' . $inTime . '|' . ($outTime ?? '') . '|' . $now;
 
-                    if (!$outTime) {
-                        $status2 = 5; // Incomplete Out
+
+ 
+                    //...... Set status for an attendance entry [start]...................
+
+                    $businessSettings = Cache::get('all_business_settings'); 
+
+                    // build multiple statuses for this attendance row
+                    $statusesForLog = [];
+                    if (strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
+                        $statusesForLog[] = 1; // Present
+                    }
+                    if (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
+                        $statusesForLog[] = 2; // Late
                     }
 
-                    $now = date('Y-m-d H:i:s');
+                    //..... check Employee On Leave or not
+                    //...check on LeaveApplicationDetail table
+                    $onLeave = $LeaveApplicationDetail->contains('leave_date', $date)->exists();
+                    if ($onLeave) {
+                        $statusesForLog[] = 2; // On Leave
+                    }
+
+                    if (!$inTime) { // compare with shift in/out time
+                        $statusesForLog[] = 10; // Incomplete In
+                    }
+                    if (!$outTime) { // compare with shift in/out time
+                        $statusesForLog[] = 11; // Incomplete Out
+                    }
+
+                    if (
+                        strtotime($last->punch_datetime) > strtotime($date . ' ' . $shift->clock_out_start_time ) && 
+                        strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shiftEnd ." - $grace minutes")) {
+                        $statusesForLog[] = 7; // Early Out
+                    }
+
+                    if ($holiday) {
+                        $statusesForLog[] = 9; // Holiday Absent
+                    }
+                    
+
+                    foreach ($statusesForLog as $st) {
+                        $statusLogData[] = [
+                            'employee_user_id'        => $row->employee_user_id,
+                            'employee_attendance_id'  => null,
+                            'attendance_status'       => $st,
+                            'created_user_id'         => $systemUserId,
+                            'created_at'              => $now,
+                        ];
+                        $statusLogKeyIndex[$rowKey][] = count($statusLogData) - 1;
+                    }
+
+
+
+
+
+
+
+                    //...... Set status for an attendance entry [end]...................
+
+
                     $prepared[] = [
                         'card_no'                                      => $row->card_no,
                         'employee_user_id'                             => $row->employee_user_id,
@@ -222,6 +336,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         'child_data_identifier_key_incoming'           => $first->id,
                         'child_data_identifier_key_outgoing'           => $last->id,
                     ];
+                    $preparedKeys[] = $rowKey;
                 }
             }
 
@@ -259,6 +374,29 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 Log::error('ProcessTempDataJob bulk insert failed', [
                     'error' => $e->getMessage(),
                 ]);
+            }
+        }
+
+        $jobEnd = date('Y-m-d H:i:s');
+        if (!empty($statusLogData)) {
+            $rows = EmployeeAttendance::where('created_user_id', $systemUserId)
+                ->whereBetween('created_at', [$jobStart, $jobEnd])
+                ->get(['id','employee_user_id','date','in_time','out_time','created_at','emp_code','card_no']);
+            $idMap = [];
+            foreach ($rows as $r) {
+                $code = $r->emp_code ?? $r->card_no;
+                $k = $code . '|' . $r->employee_user_id . '|' . $r->date . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
+                $idMap[$k] = $r->id;
+            }
+            foreach ($statusLogKeyIndex as $k => $indices) {
+                if (isset($idMap[$k])) {
+                    foreach ($indices as $idx) {
+                        $statusLogData[$idx]['employee_attendance_id'] = $idMap[$k];
+                    }
+                }
+            }
+            foreach (array_chunk($statusLogData, 500) as $chunk) {
+                EmployeeAttendanceStatusLog::insert($chunk);
             }
         }
 
