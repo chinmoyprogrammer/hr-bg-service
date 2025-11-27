@@ -126,24 +126,22 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $shift_id = $row->shift_id ?? null;
                     $shift = $shifts->get($shift_id);
                     $holiday = $holidays->get($date);
+                    $has_halfday_leave = false;
                     
 
 
                     //.... decide in-out time from shift start/end time
-                    
-                    
-                    // if(strtotime($date . ' ' . $shift->clock_out_start_time) >= strtotime($first->punch_datetime))
-                    // {
-                    //     $first = 0;
-                    //     $last  = $row->employeeAttendanceTemps->where('punch_datetime', 'like', $date . '%')->last();
-                    // }else{
+
+                    // remove duplicate rows based on punch datetime
+                    $row->employeeAttendanceTemps = $row->employeeAttendanceTemps->unique('punch_datetime');
 
 
+                    //....... Checkin punch time
                     $first = $row->employeeAttendanceTemps->where('punch_datetime', 'like', $date . '%')->first();
 
                     if($first === $last)
                     {
-                        $last  = null;
+                        $last  = null; //.... if first punch and last punch is same then set last as null
                     }else{
                         $last  = $row->employeeAttendanceTemps->where('punch_datetime', 'like', $date . '%')->last();
                     }
@@ -241,43 +239,148 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
 
  
-                    //...... Set status for an attendance entry [start]...................
+            //...... Set status for an attendance entry [start]...................
 
                     $businessSettings = Cache::get('all_business_settings'); 
 
                     // build multiple statuses for this attendance row
                     $statusesForLog = [];
-                    if (strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
+                    if (
+                        strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shiftStart ." + $grace minutes") && 
+                        strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time)
+                    )  {
                         $statusesForLog[] = 1; // Present
                     }
                     if (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
                         $statusesForLog[] = 2; // Late
                     }
+                    //...... Absent/Leave [start]...................
+                    if ($row->employeeAttendanceTemps->isEmpty()) {
+                        //..... check Employee On Leave or not
+                        //...check on LeaveApplicationDetail table
+                        $onLeave = $LeaveApplicationDetail->contains('leave_date', $date)->exists();
+                        if ($onLeave) {
+                            $statusesForLog[] = 8; // On Leave
+                        }else{
+                            
+                            if ($holiday) 
+                            {
+                                $statusesForLog[] = 9; // Holiday Absent
+                            }else{
+                                $statusesForLog[] = 0; // Absent
+                            }
+                        }
 
-                    //..... check Employee On Leave or not
-                    //...check on LeaveApplicationDetail table
-                    $onLeave = $LeaveApplicationDetail->contains('leave_date', $date)->exists();
-                    if ($onLeave) {
-                        $statusesForLog[] = 2; // On Leave
                     }
+                    //...... Absent/Leave [end]..........................
 
-                    if (!$inTime) { // compare with shift in/out time
-                        $statusesForLog[] = 10; // Incomplete In
+                    //..... Holiday Duty [start].........................
+                    if ($holiday && $row->employeeAttendanceTemps->count() > 0) 
+                    {
+                        $statusesForLog[] = 14; // Holiday Duty
                     }
-                    if (!$outTime) { // compare with shift in/out time
-                        $statusesForLog[] = 11; // Incomplete Out
-                    }
+                    //..... Holiday Duty [end]...........................
 
+
+
+                    //...... Incomplete In/Out [start]...................
+                    if ($row->employeeAttendanceTemps->count() == 1) 
+                    { 
+                        // compare with shift in/out time
+                        if(
+                            strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time) &&
+                            strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
+                        )
+                        {
+                            $statusesForLog[] = 11; // Incomplete Out
+                        }else{
+                            $statusesForLog[] = 10; // Incomplete In
+                        }
+                    }
+                    //...... Incomplete In/Out [end]...................
+
+
+                    //....... Early Out [start]...................
                     if (
-                        strtotime($last->punch_datetime) > strtotime($date . ' ' . $shift->clock_out_start_time ) && 
-                        strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shiftEnd ." - $grace minutes")) {
+                        strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out_start_time ) && 
+                        strtotime($last->punch_datetime) < strtotime($date . ' ' . $shiftEnd)
+                    ) 
+                    {
                         $statusesForLog[] = 7; // Early Out
                     }
+                    //....... Early Out [end]...................
 
-                    if ($holiday) {
-                        $statusesForLog[] = 9; // Holiday Absent
+
+                //...... Half-day (1st) – Un-Approved (UA) [start]...................
+
+                    // If check-in time exceeds end_check_in_time from shift table, treat as half-day (1st) un-approved
+                    if 
+                    (
+                        $first &&
+                        (
+                            strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time ) && 
+                            strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day ) 
+                        ) && 
+                        strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out)
+                    ) 
+                    {
+                        $has_halfday_leave = true; // mark as half-day leave indicator
+                        $statusesForLog[] = 3; // half day(1st) (UA)
                     }
-                    
+                //...... Half-day (1st) – Un-Approved (UA) [end]...................
+
+                    //...... Half-day (1st) – Approved (A) [start].....................
+                    //...... Half-day (1st) – Approved (A) [end].....................
+
+
+                //...... Half-day (2nd) – Un-Approved (UA) [start]...................
+                    if (
+                        $has_halfday_leave == false &&
+                        $last &&
+                        strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day ) &&
+                        (
+                            strtotime($last->punch_datetime) < strtotime($date . ' ' . $shift->clock_out_start_time)
+                            //strtotime($last->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day) 
+                        )
+                    ) 
+                    {
+                        $statusesForLog[] = 5; // half day(2nd) (UA)
+                    }
+                //...... Half-day (2nd) – Un-Approved (UA) [end]...................
+
+                    //...... Half-day (2nd) – Approved (A) [start]...................
+                        // todo:: 2nd half approved (A)
+                    //...... Half-day (2nd) – Approved (A) [end]...................
+
+
+                //.... Both half day (1st and 2nd) but present for few hours
+                    if
+                    (
+                        (
+                            strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->end_check_in_time ) && // 10:31 - 3:59
+                            strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
+                        ) || 
+                        (
+                            strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->clock_out_start_time ) && // 12:30 - 3:59
+                            strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
+                        ) ||
+                        (
+                            (
+                                strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time  ) && // 05:00 - 10:30
+                                strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->end_check_in_time  )
+                            ) &&
+                            (
+                                strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
+                            )
+                        )
+                    )
+                    {
+                        $statusesForLog[] = 0; // Absent
+                        $statusesForLog[] = 15; // Absent (2 Half day ) [Present for few hours]
+                    }
+
+            //...... Set status for an attendance entry [end]...................
+
 
                     foreach ($statusesForLog as $st) {
                         $statusLogData[] = [
