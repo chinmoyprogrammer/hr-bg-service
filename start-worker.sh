@@ -2,9 +2,9 @@
 set -e
 
 # Configurable via environment; sensible defaults provided
-QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,default}"
+QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue}"
 SLEEP="${HR_BG_WORKER_SLEEP:-1}"
-TRIES="${HR_BG_WORKER_TRIES:-3}"
+TRIES="${HR_BG_WORKER_TRIES:-20}"
 TIMEOUT="${HR_BG_WORKER_TIMEOUT:-60}"
 
 cd /var/www/html

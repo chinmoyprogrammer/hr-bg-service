@@ -4,9 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class RosterAssignment extends Model
+class EmployeeOtRequisition extends Model
 {
-    protected $table = 'roster_assignments';
+    protected $table = 'employee_ot_requisitions';
     public $timestamps = false;
     protected $fillable = [];
 }

@@ -20,12 +20,12 @@ class AttendanceController extends Controller
 {
     public function pullRawDataFromDeviceToTempTable(Request $request)
     {
-        Log::info('pullRawDataFromDeviceToTempTable: start', [
-            'query' => [
-                'start_time' => $request->input('start_time'),
-                'end_time' => $request->input('end_time'),
-            ],
-        ]);
+        // Log::info('pullRawDataFromDeviceToTempTable: start', [
+        //     'query' => [
+        //         'start_time' => $request->input('start_time'),
+        //         'end_time' => $request->input('end_time'),
+        //     ],
+        // ]);
         // Device credentials and API endpoint
         $device_user_name = env('DEVICE_USER_NAME');
         $device_password = env('DEVICE_PASSWORD');
@@ -111,15 +111,15 @@ class AttendanceController extends Controller
         $grouped = [];
         foreach ($records as $record) {
             // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
-            if (!isset($record['emp_code'], $record['att_date'], $record['punch_time'])) {
+            if (!isset($record['emp_code'], $record['punch_time'])) {
                 continue;
             }
             $empCode = $record['emp_code'];
             // combine date + time to build proper datetime for temp table
-            $attDate = trim($record['att_date']);
+            //$attDate = trim($record['att_date']);
             $punchTime = trim($record['punch_time']);
             // Use att_date + punch_time to avoid defaulting to today
-            $datetime = \Carbon\Carbon::parse($attDate.' '.$punchTime);
+            $datetime = \Carbon\Carbon::parse($punchTime);
 
             $grouped[] = [
                 'emp_code' => $empCode,
@@ -128,10 +128,11 @@ class AttendanceController extends Controller
         }
         // Prepare bulk insert data for temp table
         $insert_data = array_values($grouped);
-        Log::info('pullRawDataFromDeviceToTempTable: records fetched', [
-            'count' => is_array($records) ? count($records) : 0,
-        ]);
+        // Log::info('pullRawDataFromDeviceToTempTable: records fetched', [
+        //     'count' => is_array($records) ? count($records) : 0,
+        // ]);
         if (!empty($insert_data)) {
+            //dd('GGGGGGGG');
             //...Delete all previous data
             EmployeeAttendanceTemp::truncate();
             
@@ -154,12 +155,11 @@ class AttendanceController extends Controller
             }
 
             DB::insert($sql, $bindings);
-            Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
-                'inserted' => count($insert_data),
-            ]);
-        }
-
+            // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
+            //     'inserted' => count($insert_data),
+            // ]);
             
+
         $payload = [
             'message' => "HHH",
             'start_date' => $startTime,
@@ -171,10 +171,18 @@ class AttendanceController extends Controller
         dispatch((new ProcessTempDataJob($payload))
             ->onQueue($queueName)
             ->onConnection('rabbitmq'));
-        Log::info('pullRawDataFromDeviceToTempTable: dispatched ProcessTempDataJob', [
-            'queue' => $queueName,
-            'payload' => $payload,
-        ]);
+        // Log::info('pullRawDataFromDeviceToTempTable: dispatched ProcessTempDataJob', [
+        //     'queue' => $queueName,
+        //     'payload' => $payload,
+        // ]);            
+
+
+        }else{
+            dd('No data found',$insert_data,$records);
+        }
+
+            
+
 
 
     }
