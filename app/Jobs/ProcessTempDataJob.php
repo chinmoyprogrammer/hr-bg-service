@@ -570,7 +570,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                                 $last &&
                                                                 strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
                                                                 ) || ($first && $last &&
-                                                                    strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->clock_out_start_time ) && // 12:30 - 3:59
+                                                                    strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day ) && // 12:30 - 3:59 // old -> clock_out_start_time
                                                                     strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
                                                                 ) ||
                                                                 ( $first && $last &&
