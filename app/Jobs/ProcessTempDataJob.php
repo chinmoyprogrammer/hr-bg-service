@@ -5,14 +5,19 @@ namespace App\Jobs;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceStatusLog;
 use App\Models\EmployeeAttendanceTemp;
+use App\Models\EmployeeLeaveBalance;
 use App\Models\EmployeeOfficialInformation;
 use App\Models\EmployeeOtData;
 use App\Models\EmployeeOtPolicy;
 use App\Models\EmployeeOtRequisition;
 use App\Models\Holiday;
+use App\Models\HolidayDutyRequisition;
 use App\Models\LeaveApplicationDetail;
+use App\Models\PayrollAccruedAllowanceIncome;
+use App\Models\Roster;
 use App\Models\RosterAssignment;
 use App\Models\UserStatusNSettings;
+use function calculateOtHours;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -52,10 +57,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             return;
         }
 
-            //         Log::warning('PPPPPPPPPPPPPPPPPPPPPPPPPPPPP', [
-            //     'payload' => $this->payload,
-            // ]);
-            //dd('ff');
 
         $startBoundary = (new \Carbon\Carbon($startDate))->startOfDay()->toDateString();
         $endBoundary = (new \Carbon\Carbon($endDate))->endOfDay()->toDateString();
@@ -69,8 +70,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
         ->map(
                 fn ($date) => $date->format('Y-m-d')
             )->toArray();
+            array_pop($dates);
 
-        
         $officialInfos = EmployeeOfficialInformation::with
         (
             [
@@ -102,18 +103,37 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                      ->keyBy('employee_user_id');
 
 
-        $holidays = Holiday::where('date', '>=', $startDate)
+        $publicHolidays = Holiday::where('date', '>=', $startDate)
                      ->where('date', '<=', $endDate)
+                     ->whereNull('employee_user_id')
                      ->get()
                      ->keyBy('date');
 
+        $employeeHolidaysByEmp = Holiday::where('date', '>=', $startDate)
+                     ->where('date', '<=', $endDate)
+                     ->whereNotNull('employee_user_id')
+                     ->get()
+                     ->groupBy('employee_user_id')
+                     ->map(function($c){ return $c->keyBy('date'); });
 
 
-        $roasters = RosterAssignment::where('from_date', '<=', $endDate)
-            ->where('to_date', '>=', $startDate)
+        $holidayDutyRequisitions = HolidayDutyRequisition::where('date_from', '>=', $startDate)
+                        ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
+                        ->where('date_to', '<=', $endDate)
+                        ->where('status','Approved')
+                        ->whereNotNull('approved_at')
+                        ->get()
+                        ->keyBy('duty_date');
+
+
+
+        $rosters = RosterAssignment::where('from_date', '<=', $endDate)
+            ->where(function($q) use ($startDate) { $q->whereNull('to_date')->orWhere('to_date', '>=', $startDate); })
             ->whereNull('deleted_by')
             ->get()
-            ->keyBy('employee_user_id');
+            ->groupBy('employee_user_id');
+
+        $rosterCatalog = \App\Models\Roster::orderBy('effective_from', 'desc')->get()->groupBy('shift_id');
 
 
         $employeeOtPolicies = EmployeeOtPolicy::where('effective_date', '<=', $startDate)->where('status', 1)
@@ -136,7 +156,14 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
         // Build one attendance record per date for this employee
         //$grouped = $temps->groupBy(fn($t) => $t->punch_datetime->format('Y-m-d'));
-        // dd($officialInfos);
+
+
+        // delete data from EmployeeAttendance and EmployeeAttendanceStatusLog of $dates dates
+
+        EmployeeAttendance::whereIn('date', $dates)->delete();
+        EmployeeAttendanceStatusLog::whereIn('attendance_date', $dates)->delete();
+
+
 
         foreach ($officialInfos as $row) 
         {
@@ -165,10 +192,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 //.... get employee's shift id
                 $shift_id = $row->shift_id ?? null;
                 $shift = $shifts->get($shift_id);
-                $holiday = $holidays->get($date);
+                $publicHoliday = $publicHolidays->get($date);
+                $empHoliday = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                 $has_halfday_leave = false;
                 $leave_application_id = null;
                 $statusesForLog = [];
+                $onLeave = false;
                         
 
                 //.... This employee has OT on this date or not
@@ -184,51 +213,59 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             
 
                 //.... decide in-out time from shift start/end time
+
+
                             
                 if($row->employeeAttendanceTemps->isEmpty())
                 {
-                    // remove duplicate rows based on punch datetime
-                    $row->employeeAttendanceTemps = $row->employeeAttendanceTemps->unique('punch_datetime');
-                    
-                    
 
-                    $leaveApplicationDetailExists = $LeaveApplicationDetail->contains('leave_date', $date)->exists();
-                    if($leaveApplicationDetailExists)
-                    {
-                        $leave_application_id = $LeaveApplicationDetail->first()->leave_application_id;
-                        if($leave_application_id !== null)
-                        {
+                    $outDate = null;
+                    // $leaveApplicationDetailExists = $LeaveApplicationDetail->contains('leave_date', $date)->exists();
+                    // if($leaveApplicationDetailExists)
+                    // {
+                    //     $leave_application_id = $LeaveApplicationDetail->first()->leave_application_id;
+                    //     if($leave_application_id !== null)
+                    //     {
 
-                        }
-                    }
+                    //     }
+                    // }
                     
 
                     //...... Absent/Leave [start]...................
-                    if ($row->employeeAttendanceTemps->isEmpty()) 
-                    {
+                    if ($row->employeeAttendanceTemps->isEmpty())  
+                    { //weekend = 16, holiday = 9
                         //..... check Employee On Leave or not
                         //...check on LeaveApplicationDetail table
-                        $onLeave = $LeaveApplicationDetail->where('first_second_half',3)->contains('leave_date', $date)->exists(); // checking full day or not
-                        if ($onLeave) {
+                        //$onLeave = $LeaveApplicationDetail->where('first_second_half',3)->contains('leave_date', $date)->exists(); // checking full day or not
+                        if ($LeaveApplicationDetail && $LeaveApplicationDetail->where('first_second_half',3)->contains('leave_date', $date)->exists()) {
                             $statusesForLog[] = 8; // On Leave
                         }else{
-                            
-                            if ($holiday) 
+
+                            if($publicHoliday || $empHoliday)
                             {
-                                $statusesForLog[] = 9; // Holiday Absent
-                            }else{
+                            // weekend = 16, holiday = 9
+                                if ($publicHoliday) {
+                                    $statusesForLog[] = 9; // Public Holiday Absent
+                                } 
+                                if ($empHoliday) {
+                                    $statusesForLog[] = 16; // Weekend Absent (user-specific)
+                                } 
+                            }else {
                                 $statusesForLog[] = 0; // Absent
                             }
                         }
 
                         //todo:: Check alternate holiday schedule for this employee and add status
 
-                        continue; // continue to next date
+                        //continue; // continue to next date
 
                     }
                     //...... Absent/Leave [end]..........................
                 }
 
+
+                // remove duplicate rows based on punch datetime
+                $row->employeeAttendanceTemps = $row->employeeAttendanceTemps->unique('punch_datetime');
                 //....... Checkin punch time
                 $first = $row->employeeAttendanceTemps
                     ->filter(fn($t) => \Carbon\Carbon::parse($t->punch_datetime)->isSameDay($date))
@@ -248,11 +285,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $last->punch_datetime = $last->punch_datetime->toDateTimeString();
                 }
                                 
-                if($first->punch_datetime === $last->punch_datetime)
+                if($first && $first->punch_datetime === $last->punch_datetime)
                 {
                     $last  = null; //.... if first punch and last punch is same then set last as null
                 }
-                // dd("XXXXXXXXXXXXXXXXXXXXXXXXXXX",
+
                 //     strtotime($date . ' ' . $shift->start_check_in_time),
                 //     strtotime($first->punch_datetime));
 
@@ -273,15 +310,25 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
                             'out_date' => $date,
                         ]);
+                        //.... update(insert) Employee Attendance Status Log data
+                        EmployeeAttendanceStatusLog::insert([
+                            'employee_user_id'        => $row->employee_user_id,
+                            'employee_attendance_id'  => $employeeAttendance->id,
+                            'leave_application_id'    => null,
+                            'attendance_status'       => 12, // Night Duty
+                            'attendance_date'         => $date,
+                            'created_user_id'         => $systemUserId,
+                            'created_at'              => $now,
+                        ]);
 
-                        //.... update Employee Attendance Status Log data
-                        EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
-                            ->where('employee_attendance_id', $employeeAttendance->id)
-                            ->where('created_at', $now)
-                            ->where('created_user_id', $systemUserId) // Night Duty
-                            ->update([
-                                'attendance_status' => 12, // Night Duty
-                            ]);
+                        // //.... update Employee Attendance Status Log data
+                        // EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
+                        //     ->where('employee_attendance_id', $employeeAttendance->id)
+                        //     ->where('created_at', $now)
+                        //     ->where('created_user_id', $systemUserId) // Night Duty
+                        //     ->update([
+                        //         'attendance_status' => 12, // Night Duty
+                        //     ]);
 
                         continue; // skip this date
 
@@ -293,13 +340,17 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 //........................... Night Shift [Start]............................................................................................
                     //..... over night shift (accross 2 dates) [determine checkin time]
                     if (
-                        $shift->is_overnight == 1 && 
-                        strtotime($date . ' ' . $shift->start_check_in_time) >= strtotime($first->punch_datetime) && 
-                        strtotime($date . ' ' . $shift->end_check_in_time) <= strtotime($last->punch_datetime)
+                        $first && $shift->is_overnight == 1 && 
+                        strtotime($date . ' ' . $shift->start_check_in_time) >= strtotime($first->punch_datetime) 
+                        //&& strtotime($date . ' ' . $shift->end_check_in_time) <= strtotime($last->punch_datetime)
                     )
                     {
                         $last  = null; // will be adjusted next day
                         $outDate = null; // will be adjusted next day
+                        $outTime = null; // will be adjusted next day
+                    }else if($last){
+                        $outDate = $last->punch_datetime->format('Y-m-d');
+                        $outTime = $last->punch_datetime->format('H:i:s');
                     }
                     //..... For "overnight" shifting duty, on next day update the "Checkout time" of previous day to in " employee_attendance" table
                     if(
@@ -314,21 +365,32 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                 EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
                                 ->where('date', date('Y-m-d', strtotime($date." -1 day")))
                                 ->whereNotNull('in_time')
-                                ->whereNull('out_time')
-                                ->whereNull('out_date')
+                                //->whereNull('out_time')
+                                //->whereNull('out_date')
                                 ->update([
                                     'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
                                     'out_date' => $date,
                                 ]);
                                 
-                                //.... update Employee Attendance Status Log data
-                                EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
-                                ->where('employee_attendance_id', $employeeAttendance->id)
-                                ->where('created_at', $now)
-                                ->where('created_user_id', $systemUserId) // Night Duty
-                                ->update([
-                                    'attendance_status' => 13, // Night Duty
+                                //.... update(insert) Employee Attendance Status Log data
+                                EmployeeAttendanceStatusLog::insert([
+                                    'employee_user_id'        => $row->employee_user_id,
+                                    'employee_attendance_id'  => $employeeAttendance->id,
+                                    'leave_application_id'    => null,
+                                    'attendance_status'       => 13, // Night Duty
+                                    'attendance_date'         => $date,
+                                    'created_user_id'         => $systemUserId,
+                                    'created_at'              => $now,
                                 ]);
+
+                                // //.... update Employee Attendance Status Log data
+                                // EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
+                                // ->where('employee_attendance_id', $employeeAttendance->id)
+                                // ->where('created_at', $now)
+                                // ->where('created_user_id', $systemUserId) // Night Duty
+                                // ->update([
+                                //     'attendance_status' => 13, // Night Duty
+                                // ]);
                                 continue; // skip this date
                             }
                             //........................... Night Shift [End]............................................................................................
@@ -338,12 +400,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             $shiftEnd   = $row->clock_out   ?? '18:00:00';
                             $grace      = $shift->shift_grace_time ?? 0;
                             
-                            $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime) - $shift->lunch_meal_hour;
+                            $workingHours = $first && $last ? ($first->punch_datetime->diffInHours($last->punch_datetime) - $shift->lunch_meal_hour) : 0;
                             
-                            $inTime  = $first->punch_datetime->format('H:i:s');
-                            $outTime = $last->punch_datetime->format('H:i:s');
+                            $inTime  = $first && $first->punch_datetime ? $first->punch_datetime->format('H:i:s') : null;
+                            $outTime = $last && $last->punch_datetime ? $last->punch_datetime->format('H:i:s') : null;  
                             
-                            $empCode = $row->emp_code ?? $row->card_no;
+                            $empCode = $row->emp_code;
                             $rowKey = $empCode . '|' . $row->employee_user_id . '|' . $date . '|' . $inTime . '|' . ($outTime ?? '') . '|' . $now;
                             
                             
@@ -356,23 +418,67 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             
                             // build multiple statuses for this attendance row
                             
-                            if (
+                            if ($first && 
                                 strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shiftStart ." + $grace minutes") && 
                                 strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time)
                                 )  {
                                     $statusesForLog[] = 1; // Present
                                 }
-                                if (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
+                                if ($first && strtotime($first->punch_datetime) > strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
                                     $statusesForLog[] = 2; // Late
                                 }
                                 
                                 
                                 //..... Holiday Duty [start].........................
-                                if ($holiday && $row->employeeAttendanceTemps->count() > 0) 
+                                // todo ::
+
+                                // if has requisition and completed in-out then apply their supplimentery leave balance/ cash incentive etc
+                                // if holiday_types.id = 10 then 1 compensetory leave + cash or 2 compensetory leave
+                                $anyHoliday = ($publicHoliday || $empHoliday);
+                                $holidayDutyRequisition = $holidayDutyRequisitions
+                                                        ->get($date)
+                                                        ->where('requested_by_user_id ', $row->employee_user_id)
+                                                        ->exists();
+                                if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0)
                                     {
                                         $statusesForLog[] = 14; // Holiday Duty
                                     }
-                                    //..... Holiday Duty [end]...........................
+
+                                if($holidayDutyRequisition)
+                                {
+                                    // todo :: some times for fastival holiday, employee gets compensetory leave and cash incentive or 2 compensetory leave
+                                    $stat = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
+                                    ->where('leave_head_id', 5) // compensation leave type
+                                    ->where('fiscal_year', date('Y'))
+                                    ->increment('achived_this_year', 1);
+
+                                    if($publicHoliday->holiday_type_id == 10) // leave type is "Festival Holiday", then provide money
+                                    {
+                                        $grossSalary = $row->gross_salary; 
+                                        $amount = ($grossSalary / date('t')) * 1; // salary of 1 day
+                                        
+                                        PayrollAccruedAllowanceIncome::create([
+                                            'employee_user_id' => $row->employee_user_id,
+                                            'amount' => $amount,
+                                            'type' => 8, // Festival Duty // business_settings -> settings_key(PAYROLL_ACCRUED_ALLOWANCE_INCOME_TYPE) = 8
+                                            'month' => date('m'),
+                                            'year' => date('Y'),
+                                            'date' => $date,
+                                            'created_user_id' => $systemUserId,
+                                            'created_at' => $now,
+                                        ]);
+                                    }
+
+                                    if($stat)
+                                    {
+                                     $statusesForLog[] = 18; // Compensation Leave Earned
+                                    }
+
+                                    //
+                                }else{
+                                     $statusesForLog[] = 19; // Unauthorized Holiday Duty
+                                }
+                                //..... Holiday Duty [end]...........................
                                     
                                     
                                     
@@ -389,12 +495,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                 }else{
                                                     $statusesForLog[] = 10; // Incomplete In
                                                 }
-                                            }
-                                            //...... Incomplete In/Out [end]...................
+                                        }
+                                    //...... Incomplete In/Out [end]...................
                                             
                                             
                                             //....... Early Out [start]...................
-                                            if (
+                                            if ( $last &&
                                                 strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out_start_time ) && 
                                                 strtotime($last->punch_datetime) < strtotime($date . ' ' . $shiftEnd)
                                                 )
@@ -413,22 +519,22 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                     (
                                                         strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time ) && 
                                                         strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day ) 
-                                                        ) && 
-                                                        strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out)
-                                                        ) 
+                                                    ) && 
+                                                    strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out)
+                                                )
+                                                {
+                                                    
+                                                    //..... look for "LeaveApplication" table for half-day leave
+                                                    //$has_1st_halfday_leave = $LeaveApplicationDetail->where('leave_form_type',1)->where('first_second_half',1)->contains('leave_date', $date)->exists();
+                                                    if($LeaveApplicationDetail && $LeaveApplicationDetail->where('leave_form_type',1)->where('first_second_half',1)->contains('leave_date', $date)->exists())
                                                         {
-                                                            
-                                                            //..... look for "LeaveApplication" table for half-day leave
-                                                            $has_1st_halfday_leave = $LeaveApplicationDetail->where('leave_form_type',1)->where('first_second_half',1)->contains('leave_date', $date)->exists();
-                                                            if($has_1st_halfday_leave)
-                                                                {
-                                                                    $statusesForLog[] = 4; // half day(1st) (A)
-                                                                }else{
-                                                                    $statusesForLog[] = 3; // half day(1st) (UA)
-                                                                }
-                                                                
-                                                                $has_halfday_leave = true; // mark as half-day leave indicator
-                                                            }
+                                                            $statusesForLog[] = 4; // half day(1st) (A)
+                                                        }else{
+                                                            $statusesForLog[] = 3; // half day(1st) (UA)
+                                                        }
+                                                        
+                                                        $has_halfday_leave = true; // mark as half-day leave indicator
+                                                }
                                                             //...... Half-day (1st) – Un-Approved (UA) [end]...................
                                                             
                                                             
@@ -441,45 +547,46 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                                 (
                                                                     strtotime($last->punch_datetime) < strtotime($date . ' ' . $shift->clock_out_start_time)
                                                                     //strtotime($last->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day) 
-                                                                    )
-                                                                    ) 
+                                                                )
+                                                               ) 
+                                                            {
+                                                                //$has_1st_halfday_leave = $LeaveApplicationDetail->where('leave_form_type',1)->where('first_second_half',1)->contains('leave_date', $date)->exists();
+                                                                if($LeaveApplicationDetail && $LeaveApplicationDetail->where('leave_form_type',1)->where('first_second_half',1)->contains('leave_date', $date)->exists())
                                                                     {
-                                                                        $has_1st_halfday_leave = $LeaveApplicationDetail->where('leave_form_type',1)->where('first_second_half',1)->contains('leave_date', $date)->exists();
-                                                                        if($has_1st_halfday_leave)
-                                                                            {
-                                                                                $statusesForLog[] = 6; // half day(2nd) (A)
-                                                                            }else{
-                                                                                $statusesForLog[] = 5; // half day(2nd) (UA)
-                                                                            }
-                                                                        }
-                                                                        //...... Half-day (2nd) – Un-Approved (UA) [end]...................
+                                                                        $statusesForLog[] = 6; // half day(2nd) (A)
+                                                                    }else{
+                                                                        $statusesForLog[] = 5; // half day(2nd) (UA)
+                                                                    }
+                                                            }
+                                                            //...... Half-day (2nd) – Un-Approved (UA) [end]...................
                                                                         
                                                                         
-                                                                        //.... Both half day (1st and 2nd) but present for few hours
-                                                                        if
-                                                                        (
-                                                                            (
-                                                                                strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->end_check_in_time ) && // 10:31 - 3:59
-                        strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
-                        ) || 
-                        (
-                            strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->clock_out_start_time ) && // 12:30 - 3:59
-                            strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
-                            ) ||
-                            (
-                                (
-                                    strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time  ) && // 05:00 - 10:30
-                                    strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->end_check_in_time  )
-                                    ) &&
-                                    (
-                                        strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
-                                        )
-                                        ) && $leave_application_id !== null
-                                        )
-                                        {
-                                            $statusesForLog[] = 0; // Absent
-                                            $statusesForLog[] = 15; // Absent (2 Half day ) [Present for few hours]
-                                        }
+                                                            //.... Both half day (1st and 2nd) but present for few hours
+                                                            if
+                                                            (
+                                                                (
+                                                                $first &&
+                                                                strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->end_check_in_time ) && // 10:31 - 3:59
+                                                                $last &&
+                                                                strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
+                                                                ) || ($first && $last &&
+                                                                    strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->clock_out_start_time ) && // 12:30 - 3:59
+                                                                    strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
+                                                                ) ||
+                                                                ( $first && $last &&
+                                                                    (
+                                                                        strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time  ) && // 05:00 - 10:30
+                                                                        strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->end_check_in_time  )
+                                                                    ) &&
+                                                                    (
+                                                                        strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
+                                                                    )
+                                                                ) && $leave_application_id !== null
+                                                            )
+                                                            {
+                                                                $statusesForLog[] = 0; // Absent
+                                                                $statusesForLog[] = 15; // Absent (2 Half day ) [Present for few hours]
+                                                            }
                                         
                                         //...... Set status for an attendance entry [end]...................
                                         
@@ -490,6 +597,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                 'employee_attendance_id'  => null,
                                                 'leave_application_id'    => $leave_application_id, // default null
                                                 'attendance_status'       => $st,
+                                                'attendance_date'         => $date,
                                                 'created_user_id'         => $systemUserId,
                                                 'created_at'              => $now,
                                             ];
@@ -519,117 +627,80 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                 }
                                                 
                                                 
-                                                //.... is roster assigned date
-                                                if(isset($roasters[$row->employee_user_id]) && $roasters[$row->employee_user_id]->contains('roster_date', $date))
-                                                    {
-                                                        $isRosterAssigned = 1;
-                                                        $roster_id = $roasters[$row->employee_user_id]->where('roster_date', $date)->first()->roster_id;
-                                                    }else{
-                                                        $isRosterAssigned = 0;
-                                                        $roster_id = 0;
+                                                $employeeAssignments = $roasters[$row->employee_user_id] ?? collect();
+                                                $assignmentForDate = $employeeAssignments->first(function ($a) use ($date) {
+                                                    return ($a->from_date <= $date) && (is_null($a->to_date) || $a->to_date >= $date);
+                                                });
+                                                if ($assignmentForDate) {
+                                                    $isRosterAssigned = 1;
+                                                    $roster_id = $assignmentForDate->roster_id;
+                                                } else {
+                                                    $isRosterAssigned = 0;
+                                                    $fallbackByShift = $rosterCatalog[$row->shift_id] ?? collect();
+                                                    $effectiveRoster = $fallbackByShift->first(function ($r) use ($date) {
+                                                        return ($r->effective_from <= $date) && (is_null($r->effective_to) || $r->effective_to >= $date);
+                                                    }) ?: $fallbackByShift->first();
+                                                    if ($effectiveRoster) {
+                                                        $roster_id = $effectiveRoster->id;
+                                                    } else {
+                                                        continue;
                                                     }
+                                                }
                                                     
                                                     
                                                     //.... OT Calculation [start]...................
                                                     //..... Get OT Policy 
                                                     //$otPolicy = $employeeOtPolicies[$row->employee_user_id]->where('ot_policy_date', $date)->first();
-                                                    $otPolicy = $row->employeeOtPolicy;
-                                                    $minimum_ot_hours = $otPolicy?->minimum_ot_hours ?? 0;
-                                                    $maximum_ot_hours = $otPolicy?->maximum_ot_hours ?? 0;
-                                                    $shift_break_duration = $otPolicy?->shift_break_duration ?? 0;
-                                                    $special_allowance_eligibility = $otPolicy?->special_allowance_eligibility ?? 0;
-                                                    
-                                                    $workingHours = strtotime($last->punch_datetime) - strtotime($first->punch_datetime);
-                                                    $workingHours = $workingHours / 60 / 60;
-                                                    $otHours = $workingHours - $shift->lunch_meal_hour - $shift->total_working_hours - $shift_break_duration ;
-
-
-                                                    
-                                                    
-                                                    if($hasOtRequisition)
-                                                        {
-                                                            // Fetch the active OT policy for this employee on the given date
-                                                            //$otPolicy = $employeeOtPolicies->get($row->employee_user_id);
-                                                            $otRate = $otPolicy ? $otPolicy->ot_rate : 0;
-                                                            $otMultiplier = $otPolicy ? $otPolicy->ot_multiplier : 1;
-                                                            
-                                                            if($otHours >= $minimum_ot_hours && $otHours <= $maximum_ot_hours)
-                                                                {
-                                                                    $calculatedOtHours = $otHours;
-                                                                }elseif($otHours > $maximum_ot_hours)
-                                                                {
-                                                                    $calculatedOtHours = $maximum_ot_hours;
-                                                                }
-                                                                // Calculate OT amount
-                                                                $otAmount = $calculatedOtHours * $otRate * $otMultiplier;
-                                                                
-                                                                
-                                                                // Calculate special allowance
-                                                                $special_allowance = $special_allowance_eligibility ? 0 : 0;
-                                                                
-                                                                
-                                                                EmployeeOtData::create([
-                                                                    'employee_user_id' => $row->employee_user_id,
-                                                                    'employee_ot_policy_id' => $otPolicy ? $otPolicy->id : null,
-                                                                    'ot_requisition_id' => $otRequisition->id,
-                                                                    'ot_rate' => $otRate,
-                                                                    'ot_hours' => $calculatedOtHours,
-                                                                    'ot_multiplier' => $otMultiplier,
-                                                                    'ot_amount' => $otAmount,
-                                                                    'is_paid' => 0,
-                                                                    'ot_payment_date' => null,
-                                                                    'ot_date' => $date,
-                                                                    'special_allowance' => $special_allowance,
-                                                                    'created_user_id' => $systemUserId,
-                                                                    'created_at' => $now,
-                                                                ]);
-                                                            }
-                                                            
-                                                            //.... OT Calculation [end]...................
-                                                            
-                                                            
-                                                            
-                                                            
-                                                            
-                                                            
-                                                            
-                                                            //...... Set status for an attendance entry [end]...................
-                                                            
-                                                            
-                                                            $prepared[] = [
-                                                                'card_no'                                      => $row->card_no,
-                                                                'employee_user_id'                             => $row->employee_user_id,
-                                                                'department_id'                                => $row->department_id,
-                                                                'section_id'                                   => $row->section_id,
-                                                                'shift_id'                                     => $row->shift_id,
-                                                                'shift_start_time'                             => $shiftStart,
-                                                                'shift_grace_time'                             => $grace,
-                                                                'shift_end_time'                               => $shiftEnd,
-                                                                'date'                                         => $date,
-                                                                'in_time'                                      => $inTime,
-                                                                'out_date'                                     => $outDate,
-                                                                'out_time'                                     => $outTime,
-                                                                'on_leave_status'                              => $onLeave,
-                                                                'transfered_to_ot'                             => 0, //...ektu por
-                                                                'is_holiday'                                   => $holiday, 
-                                                                'is_join'                                      => $isJoin,
-                                                                'is_manual'                                    => 0,
-                                                                'is_roster'                                    => $isRosterAssigned,
-                                                                'roster_id'                                    => $roster_id,
-                                                                'absent_bridge'                                => 0,
-                                                                'source'                                       => 'machine',
-                                                                'is_corrected'                                 => 0,
-                                                                'working_hours'                                 => $workingHours,
-                                                                'employee_applied_attendance_correction_id'    => null,
-                                                                'created_user_id'                              => $systemUserId,
-                                                                'updated_user_id'                              => $systemUserId,
-                                                                'deleted_user_id'                              => null,
-                                                                'created_at'                                   => $now,
-                                                            ];
-                                                            dd("Problem in this array only (above), other above codes are okay");
-                                                            $preparedKeys[] = $rowKey;
-                                                        }
+                                                    if($first && $last)
+                                                    {
+                                                        $transferedToOTStatus= calculateOtHours($row, $otRequisition, $hasOtRequisition, $shift, $first, $last, $systemUserId);
+                                                    }else{
+                                                        $transferedToOTStatus = false;
                                                     }
+                                                            
+                                                    //.... OT Calculation [end]...................
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                    //...... Set status for an attendance entry [end]...................
+                                                    
+                                                    
+                                                    $prepared[] = [
+                                                        'emp_code'                                      => $row->emp_code,
+                                                        'employee_user_id'                             => $row->employee_user_id,
+                                                        'department_id'                                => $row->department_id,
+                                                        'section_id'                                   => $row->section_id,
+                                                        'shift_id'                                     => $row->shift_id,
+                                                        'shift_start_time'                             => $shiftStart,
+                                                        'shift_grace_time'                             => $grace,
+                                                        'shift_end_time'                               => $shiftEnd,
+                                                        'date'                                         => $date,
+                                                        'in_time'                                      => $inTime,
+                                                        'out_date'                                     => $outDate,
+                                                        'out_time'                                     => $outTime,
+                                                        'on_leave_status'                              => null,
+                                                        'transfered_to_ot'                             => ($transferedToOTStatus ? 1 : 0), 
+                                                        'is_holiday'                                   => (($publicHoliday || $empHoliday) ? 1 : 0), 
+                                                        'is_join'                                      => $isJoin,
+                                                        'is_manual'                                    => 0,
+                                                        'is_roster'                                    => $isRosterAssigned,
+                                                        'roster_id'                                    => $roster_id,
+                                                        'absent_bridge'                                => 0,
+                                                        'source'                                       => 'biometric',
+                                                        'is_corrected'                                 => 0,
+                                                        'working_hours'                                 => $workingHours,
+                                                        'employee_applied_attendance_correction_id'    => null,
+                                                        'created_user_id'                              => $systemUserId,
+                                                        'updated_user_id'                              => $systemUserId,
+                                                        'deleted_user_id'                              => null,
+                                                        'created_at'                                   => $now,
+                                                    ];
+                                                    //dd("Problem in this array only (above), other above codes are okay");
+                                                    $preparedKeys[] = $rowKey;
+            }
+        }
 
             Log::warning('data prepared', [
                 'payload' => $prepared,
@@ -678,10 +749,10 @@ class ProcessTempDataJob extends Job implements ShouldQueue
         if (!empty($statusLogData)) {
             $rows = EmployeeAttendance::where('created_user_id', $systemUserId)
                 ->whereBetween('created_at', [$jobStart, $jobEnd])
-                ->get(['id','employee_user_id','date','in_time','out_time','created_at','emp_code','card_no']);
+                ->get(['id','employee_user_id','date','in_time','out_time','created_at','emp_code']);
             $idMap = [];
             foreach ($rows as $r) {
-                $code = $r->emp_code ?? $r->card_no;
+                $code = $r->emp_code;
                 $k = $code . '|' . $r->employee_user_id . '|' . $r->date . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
                 $idMap[$k] = $r->id;
             }

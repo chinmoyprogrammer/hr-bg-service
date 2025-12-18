@@ -1,6 +1,8 @@
 <?php
 
 use App\Helpers\ApiResponse;
+use App\Models\EmployeeOtData;
+
 
 if (!function_exists('api_success')) {
     function api_success($data = null, $message = 'Success', $code = 200, $meta = [],$requestId = null) {
@@ -38,5 +40,69 @@ if (!function_exists('collectionHasNested'))
     function collectionHasNested($collection, callable $checker): bool
     {
         return $collection->isNotEmpty() && $collection->some($checker);
+    }
+}
+
+// helper function for calculate OT hours
+if (!function_exists('calculateOtHours')) 
+{
+    function calculateOtHours($empOfficialDataRow, $otRequisition, $hasOtRequisition, $shift, $firstPunch, $lastPunch, $userId)
+    {
+        $otPolicy = $empOfficialDataRow->employeeOtPolicy;
+
+        $minimum_ot_hours = $otPolicy?->minimum_ot_hours ?? 0;
+        $maximum_ot_hours = $otPolicy?->maximum_ot_hours ?? 0;
+        $shift_break_duration = $otPolicy?->shift_break_duration ?? 0;
+        $special_allowance_eligibility = $otPolicy?->special_allowance_eligibility ?? 0;
+        
+        $workingHours = strtotime($lastPunch->punch_datetime) - strtotime($firstPunch->punch_datetime);
+        $workingHours = $workingHours / 60 / 60;
+        $otHours = $workingHours - $shift->lunch_meal_hour - $shift->total_working_hours - $shift_break_duration ;
+
+
+        
+        
+        if($hasOtRequisition)
+            {
+                // Fetch the active OT policy for this employee on the given date
+                //$otPolicy = $employeeOtPolicies->get($row->employee_user_id);
+                $otRate = $otPolicy ? $otPolicy->ot_rate : 0;
+                $otMultiplier = $otPolicy ? $otPolicy->ot_multiplier : 1;
+                
+                if($otHours >= $minimum_ot_hours && $otHours <= $maximum_ot_hours)
+                    {
+                        $calculatedOtHours = $otHours;
+                    }elseif($otHours > $maximum_ot_hours)
+                    {
+                        $calculatedOtHours = $maximum_ot_hours;
+                    }
+                    // Calculate OT amount
+                    $otAmount = $calculatedOtHours * $otRate * $otMultiplier;
+                    
+                    
+                    // Calculate special allowance
+                    $special_allowance = $special_allowance_eligibility ? 0 : 0;
+                    
+                    
+                    EmployeeOtData::create([
+                        'employee_user_id' => $empOfficialDataRow->employee_user_id,
+                        'employee_ot_policy_id' => $otPolicy ? $otPolicy->id : null,
+                        'ot_requisition_id' => $otRequisition ? $otRequisition->id : null,
+                        'ot_rate' => $otRate,
+                        'ot_hours' => $calculatedOtHours,
+                        'ot_multiplier' => $otMultiplier,
+                        'ot_amount' => $otAmount,
+                        'is_paid' => 0,
+                        'ot_payment_date' => null,
+                        'ot_date' => $firstPunch->punch_datetime->format('Y-m-d'),
+                        'special_allowance' => $special_allowance,
+                        'created_user_id' => $userId,
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ]);
+
+                    return true;
+            }else{
+                return false;
+            }
     }
 }
