@@ -383,6 +383,21 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                     'created_at'              => $now,
                                 ]);
 
+                                //...... Provide Night Duty Special Allowance
+                                $grossSalary = $row->gross_salary; 
+                                $amount = ($grossSalary / date('t')) * 1; // ######## demo, need to confirm from shamim-admin
+                                
+                                PayrollAccruedAllowanceIncome::create([
+                                    'employee_user_id' => $row->employee_user_id,
+                                    'amount' => $amount,
+                                    'type' => 6, // Night Duty Allowance // business_settings -> settings_key(PAYROLL_ACCRUED_ALLOWANCE_INCOME_TYPE) = 8
+                                    'month' => date('m'),
+                                    'year' => date('Y'),
+                                    'date' => $date,
+                                    'created_user_id' => $systemUserId,
+                                    'created_at' => $now,
+                                ]);
+
                                 // //.... update Employee Attendance Status Log data
                                 // EmployeeAttendanceStatusLog::where('employee_user_id', $row->employee_user_id)
                                 // ->where('employee_attendance_id', $employeeAttendance->id)
@@ -455,7 +470,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                     if($publicHoliday->holiday_type_id == 10) // leave type is "Festival Holiday", then provide money
                                     {
                                         $grossSalary = $row->gross_salary; 
-                                        $amount = ($grossSalary / date('t')) * 1; // salary of 1 day
+                                        //todo:: calculate by OT Policy. 
+                                        // calculate using monthly hrs or day of months
+                                        $amount = ($grossSalary / date('t')) * $row->employeeOtPolicy->multiplier; // salary of 1 day
                                         
                                         PayrollAccruedAllowanceIncome::create([
                                             'employee_user_id' => $row->employee_user_id,
