@@ -76,6 +76,15 @@ class EmployeeOfficialInformation extends Model
         return $this->hasMany(EmployeeWeekendDays::class, 'employee_user_id', 'employee_user_id');
     }
 
+    public function hasLeavePolicy()
+    {
+        return $this->hasOne(LeavePolicy::class, 'id', 'leave_policy_id');
+    }
+
+    public function hasLeavePolicyDetail()
+    {
+        return $this->hasMany(LeavePolicyDetail::class, 'leave_policy_id', 'leave_policy_id');
+    }
 
 }
 

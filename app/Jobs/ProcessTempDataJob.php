@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceStatusLog;
 use App\Models\EmployeeAttendanceTemp;
+use App\Models\EmployeeLeaveAchieveLog;
 use App\Models\EmployeeLeaveBalance;
 use App\Models\EmployeeOfficialInformation;
 use App\Models\EmployeeOtData;
@@ -87,7 +88,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $query
                         ->where('effective_date', '<=', $startBoundary)
                         ->where('status', 1);
-                }
+                },
+                'hasLeavePolicyDetail'
             ]
         )
         ->get();
@@ -385,12 +387,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
                                 //...... Provide Night Duty Special Allowance
                                 $grossSalary = $row->gross_salary; 
-                                $amount = ($grossSalary / date('t')) * 1; // ######## demo, need to confirm from shamim-admin
+                                $amount = ($grossSalary / date('t')) * 1; // todo:: ######## demo, need to confirm from shamim-admin
                                 
                                 PayrollAccruedAllowanceIncome::create([
                                     'employee_user_id' => $row->employee_user_id,
                                     'amount' => $amount,
-                                    'type' => 6, // Night Duty Allowance // business_settings -> settings_key(PAYROLL_ACCRUED_ALLOWANCE_INCOME_TYPE) = 8
+                                    'type' => 6, // Night Duty Allowance // business_settings -> settings_key(PAYROLL_ACCRUED_ALLOWANCE_INCOME_TYPE) = 6
                                     'month' => date('m'),
                                     'year' => date('Y'),
                                     'date' => $date,
@@ -467,12 +469,24 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                     ->where('fiscal_year', date('Y'))
                                     ->increment('achived_this_year', 1);
 
+                                    $leave_validity = date('Y-m-d', strtotime($date . ' + ' . $row->hasLeavePolicyDetail->where('leave_head_id', 5)->first()->leave_avail_validity_days . ' days'));
+                                    //...... record every single leave acchived after designated adding leaves
+                                    EmployeeLeaveAchieveLog::create([
+                                        'leave_head_id'            => 5, // compensation leave type
+                                        'validity_date'            => $leave_validity,
+                                        'employee_attendance_id'   => $employeeAttendance->id,
+                                        'leave_count'              => 1,
+                                        'leave_final_destination'  => 'Compensatory leave earned from Festival Holiday duty',
+                                        'created_user_id'          => $systemUserId,
+                                        'created_at'               => $now,
+                                    ]);
+
                                     if($publicHoliday->holiday_type_id == 10) // leave type is "Festival Holiday", then provide money
                                     {
                                         $grossSalary = $row->gross_salary; 
                                         //todo:: calculate by OT Policy. 
                                         // calculate using monthly hrs or day of months
-                                        $amount = ($grossSalary / date('t')) * $row->employeeOtPolicy->multiplier; // salary of 1 day
+                                        $amount = ($grossSalary / date('t')) * $row->employeeOtPolicy->multiplier * 2; // salary of 1 day
                                         
                                         PayrollAccruedAllowanceIncome::create([
                                             'employee_user_id' => $row->employee_user_id,
