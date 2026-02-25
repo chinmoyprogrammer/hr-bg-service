@@ -122,10 +122,10 @@ class ProcessTempDataJob extends Job implements ShouldQueue
         $holidayDutyRequisitions = HolidayDutyRequisition::where('date_from', '>=', $startDate)
                         ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
                         ->where('date_to', '<=', $endDate)
-                        ->where('status','Approved')
-                        ->whereNotNull('approved_at')
+                        ->where('holiday_duty_requisitions.status','Approved')
+                        ->whereNotNull('holiday_duty_requisitions.approved_at')
                         ->get()
-                        ->keyBy('duty_date');
+                        ->keyBy('holiday_duty_requisitions.duty_date');
 
 
 
@@ -297,7 +297,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
                 //................................ Speccial over night checkout for normal shift duty [start] .................................................
                 if(
-                    $first && $shift->is_overnight == 0 && $first->punch_datetime &&
+                    $first && $shift && $shift->is_overnight == 0 && $first->punch_datetime &&
                     strtotime($date . ' ' . $shift->start_check_in_time) > strtotime($first->punch_datetime->format('Y-m-d H:i:s'))
                 )
                 {
@@ -342,7 +342,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 //........................... Night Shift [Start]............................................................................................
                     //..... over night shift (accross 2 dates) [determine checkin time]
                     if (
-                        $first && $shift->is_overnight == 1 && 
+                        $first && $shift && $shift->is_overnight == 1 && 
                         strtotime($date . ' ' . $shift->start_check_in_time) >= strtotime($first->punch_datetime) 
                         //&& strtotime($date . ' ' . $shift->end_check_in_time) <= strtotime($last->punch_datetime)
                     )
@@ -355,7 +355,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $outTime = $last->punch_datetime->format('H:i:s');
                     }
                     //..... For "overnight" shifting duty, on next day update the "Checkout time" of previous day to in " employee_attendance" table
-                    if(
+                    if($shift &&
                         $shift->is_overnight == 1 && 
                         (
                             strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out ." - 4 hours") ||
@@ -417,10 +417,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             $shiftEnd   = $row->clock_out   ?? '18:00:00';
                             $grace      = $shift->shift_grace_time ?? 0;
                             
-                            $workingHours = $first && $last ? ($first->punch_datetime->diffInHours($last->punch_datetime) - $shift->lunch_meal_hour) : 0;
+                            $workingHours = $first && $last && $shift? ($first->punch_datetime->diffInHours($last->punch_datetime) - $shift->lunch_meal_hour) : 0;
                             
                             $inTime  = $first && $first->punch_datetime ? $first->punch_datetime->format('H:i:s') : null;
                             $outTime = $last && $last->punch_datetime ? $last->punch_datetime->format('H:i:s') : null;  
+							$outDate = $last && $last->punch_datetime ? $last->punch_datetime->format('Y-m-d') : null;
                             
                             $empCode = $row->emp_code;
                             $rowKey = $empCode . '|' . $row->employee_user_id . '|' . $date . '|' . $inTime . '|' . ($outTime ?? '') . '|' . $now;
@@ -435,7 +436,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                             
                             // build multiple statuses for this attendance row
                             
-                            if ($first && 
+                            if ($first && $shift && 
                                 strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shiftStart ." + $grace minutes") && 
                                 strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time)
                                 )  {
@@ -452,16 +453,21 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                 // if has requisition and completed in-out then apply their supplimentery leave balance/ cash incentive etc
                                 // if holiday_types.id = 10 then 1 compensetory leave + cash or 2 compensetory leave
                                 $anyHoliday = ($publicHoliday || $empHoliday);
-                                $holidayDutyRequisition = $holidayDutyRequisitions
+                                $holidayDutyRequisition_all = $holidayDutyRequisitions
                                                         ->get($date)
-                                                        ->where('requested_by_user_id ', $row->employee_user_id)
-                                                        ->exists();
+                                                        ;
                                 if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0)
                                     {
                                         $statusesForLog[] = 14; // Holiday Duty
                                     }
 
-                                if($holidayDutyRequisition)
+								if($holidayDutyRequisition_all )
+								{
+									$holidayDutyRequisition = $holidayDutyRequisitions_all
+													->where('requested_by_user_id ', $row->employee_user_id)
+													->exists();
+								
+								if($holidayDutyRequisition)
                                 {
                                     // todo :: some times for fastival holiday, employee gets compensetory leave and cash incentive or 2 compensetory leave
                                     $stat = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
@@ -509,15 +515,19 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                 }else{
                                      $statusesForLog[] = 19; // Unauthorized Holiday Duty
                                 }
-                                //..... Holiday Duty [end]...........................
-                                    
+                                
+								}else{
+									 $statusesForLog[] = 19; // Unauthorized Holiday Duty
+								}
+								
+								//..... Holiday Duty [end]...........................
                                     
                                     
                                     //...... Incomplete In/Out [start]...................
                                     if ($row->employeeAttendanceTemps->count() == 1) 
                                         { 
                                             // compare with shift in/out time
-                                            if(
+                                            if( $shift && 
                                                 strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time) &&
                                                 strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
                                                 )
@@ -531,7 +541,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                             
                                             
                                             //....... Early Out [start]...................
-                                            if ( $last &&
+                                            if ( $last && $shift &&
                                                 strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out_start_time ) && 
                                                 strtotime($last->punch_datetime) < strtotime($date . ' ' . $shiftEnd)
                                                 )
@@ -546,7 +556,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                 // If check-in time exceeds end_check_in_time from shift table, treat as half-day (1st) un-approved
                                                 if 
                                                 (
-                                                    $first &&
+                                                    $first && $shift &&
                                                     (
                                                         strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time ) && 
                                                         strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day ) 
@@ -573,7 +583,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                             //...... Half-day (2nd) – Un-Approved (UA) [start]...................
                                                             if (
                                                                 $has_halfday_leave == false &&
-                                                                $last &&
+                                                                $last && $shift &&
                                                                 strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day ) &&
                                                                 (
                                                                     strtotime($last->punch_datetime) < strtotime($date . ' ' . $shift->clock_out_start_time)
@@ -596,15 +606,15 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                             if
                                                             (
                                                                 (
-                                                                $first &&
+                                                                $first && $shift && 
                                                                 strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->end_check_in_time ) && // 10:31 - 3:59
                                                                 $last &&
                                                                 strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
-                                                                ) || ($first && $last &&
+                                                                ) || ($first && $last && $shift && 
                                                                     strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day ) && // 12:30 - 3:59 // old -> clock_out_start_time
                                                                     strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time)
                                                                 ) ||
-                                                                ( $first && $last &&
+                                                                ( $first && $last && $shift &&
                                                                     (
                                                                         strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time  ) && // 05:00 - 10:30
                                                                         strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->end_check_in_time  )
