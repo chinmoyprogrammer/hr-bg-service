@@ -2,18 +2,16 @@
 
 namespace App\Models;
 
-
 use Illuminate\Auth\Authenticatable;
-use Laravel\Lumen\Auth\Authorizable;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Contracts\Auth\Access\Authorizable as AuthorizableContract;
+use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Laravel\Lumen\Auth\Authorizable;
 
 class User extends Model implements AuthenticatableContract, AuthorizableContract
 {
     use Authenticatable, Authorizable, HasFactory;
-
 
     /**
      * The attributes that are mass assignable.
@@ -21,36 +19,7 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
      * @var string[]
      */
     protected $guarded = [];
-    public $timestamps = false;
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array
-     */
-    protected $fillable = [
-        'username',
-        'password',
-        'name',
-        'email',
-        'user_type_id',
-        'status',
-        'date_of_birth',
-        'religion_id',
-        'gender_id',
-        'blood_group_id',
-        'is_draft',
-        'force_password_change',
-        'login_eligibility',
-        'last_login_datetime',
-        'last_login_ip',
-        'created_user_id',
-        'updated_user_id',
-        'created_at',
-        'updated_at',
-        'deleted_by',
-        'deleted_at',
-    ];
-
+    
     // Relationships
     public function userType()
     {
@@ -161,23 +130,10 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
         return $this->hasMany(EmployeeTransportation::class, 'employee_user_id');
     }
 
-    public function hasOfficialInformation()
-    {
-        return $this->hasOne(EmployeeOfficialInformation::class, 'employee_user_id', 'id');
-    }
 
-    public function hasBasicInformation()
-    {
-        return $this->hasOne(EmployeeBasicInformation::class, 'employee_user_id', 'id');
-    }
-
-    public function hasGender()
-    {
-        return $this->hasOne(Gender::class, 'id', 'gender_id');
-    }
-
+    //loans
     public function loans()
     {
-        return $this->hasOne(PayrollSalaryAdvanceNLoan::class, 'employee_user_id', 'id');
+        return $this->hasMany(Payro::class, 'employee_user_id');
     }
 }

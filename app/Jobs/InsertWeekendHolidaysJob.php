@@ -8,6 +8,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+
 
 class InsertWeekendHolidaysJob extends Job implements ShouldQueue
 {
@@ -126,8 +129,16 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
             $types = DB::table('holiday_types')
                 ->select(['id','title','day_month_collection'])
                 ->whereNotNull('day_month_collection')
-                ->whereRaw('TRIM(day_month_collection) <> ""')
+            ->whereRaw('TRIM(day_month_collection) <> ""')
+            ->where('status',1)
+            ->where('for_year',date('Y'))
                 ->get();
+            if (empty($types)) 
+            { 
+                Log::error('No holiday types found for the year ' . date('Y').', File: InsertWeekendHolidaysJob, Line: ' . __LINE__);
+                throw new \Exception('No holiday types found for the year ' . date('Y'));
+
+            }
             foreach ($types as $t) {
                 $raw = $t->day_month_collection;
                 $items = [];
@@ -142,20 +153,16 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
                             $parts = preg_split('/[\s,\n\r]+/', $norm);
                             foreach ($parts as $p) {
                                 $p = trim($p);
-                                if ($p !== '') { $items[] = $p; }
+                                if ($p !== '') { $items[] = ['date' => $p, 'description' => null]; }
                             }
                         }
                     }
                 } elseif (is_array($raw)) {
                     $items = $raw;
                 }
-                // if (!empty($items)) {
-                //     DB::table('holidays')
-                //         ->where('holiday_type_id', (int) $t->id)
-                //         ->whereYear('date', $year)
-                //         ->delete();
-                // }
-                foreach ($items as $mmdd) {
+                foreach ($items as $item) {
+                    $mmdd = is_array($item) ? ($item['date'] ?? null) : $item;
+                    $description = is_array($item) ? ($item['description'] ?? null) : null;
                     if (!is_string($mmdd)) { continue; }
                     $s = str_replace(' ', '', $mmdd);
                     $s = str_replace('/', '-', $s);
@@ -178,7 +185,7 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
                         'holiday_type_id' => (int) $t->id,
                         'recurring' => 1,
                         'recurring_rule' => 'Yearly',
-                        'description' => null,
+                        'description' => $description,
                         'status' => 'Active',
                         'created_user_id' => $systemUserId,
                         'updated_user_id' => null,

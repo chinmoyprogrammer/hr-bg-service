@@ -2,9 +2,9 @@
 set -e
 
 # Configurable via environment; sensible defaults provided
-QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,insertWeekendHolidays_queue}"
+QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,insertWeekendHolidays_queue,processTempSalary_queue,processRealSalary_queue}"
 SLEEP="${HR_BG_WORKER_SLEEP:-1}"
-TRIES="${HR_BG_WORKER_TRIES:-20}"
+TRIES="${HR_BG_WORKER_TRIES:-100}"
 TIMEOUT="${HR_BG_WORKER_TIMEOUT:-60}"
 MAX_JOBS="${HR_BG_WORKER_MAX_JOBS:-100}"
 
