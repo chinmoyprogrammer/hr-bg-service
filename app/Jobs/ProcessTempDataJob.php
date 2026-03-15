@@ -477,7 +477,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                     if($lateDeductionPolicy)
                                     {
 
-                                        if($lateDeductionPolicy->deduction_basis == "Day" && ( ($row->lateDays->count()+1) % ($lateDeductionPolicy->max_late_days+1) == 0 ) )
+                                        // for deduction basis -> "Day"
+                                        if($lateDeductionPolicy->deduction_basis == "Day" && ( ($row->lateDays->count()+1) % ($lateDeductionPolicy->max_late_days+1) == 0 ) ) 
                                         {
                                             //... first check is there any any entry exists for this month for this employee or not
                                             $lateAttendanceRecord = LateAttendanceRecord::with('lateAttendanceRecordDetails')
@@ -486,18 +487,18 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                             ->where('year',  date('Y', strtotime($date)))
                                             ->first();
 
-                                            // // delete previous late deduction data of the month of searching date from  late_attendance_records and late_attendance_record_details table
                                             // LateAttendanceRecord::with('lateAttendanceRecordDetails')
                                             // ->where('employee_user_id', $row->employee_user_id)
                                             // ->where('month',  date('m', strtotime($date)))
                                             // ->where('year',  date('Y', strtotime($date)))
                                             // ->delete();
-
+                                            
                                             $recordIds = LateAttendanceRecord::where('employee_user_id', $row->employee_user_id)
-                                                ->where('month', date('m', strtotime($date)))
-                                                ->where('year', date('Y', strtotime($date)))
-                                                ->pluck('id');
-
+                                            ->where('month', date('m', strtotime($date)))
+                                            ->where('year', date('Y', strtotime($date)))
+                                            ->pluck('id');
+                                            
+                                            // delete previous late deduction data of the month of searching date from  late_attendance_records and late_attendance_record_details table
                                             if ($recordIds->isNotEmpty()) 
                                             {
                                                 LateAttendanceRecordDetail::whereIn('late_attendance_record_id', $recordIds)->delete();
@@ -509,7 +510,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
 
 
-                                            //.... insert 
                                             // $lateAttendanceRecord = LateAttendanceRecord::create([
                                             //     'employee_user_id' => $row->employee_user_id,
                                             //     'month' => date('m', strtotime($date)),
@@ -517,6 +517,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                             //     'total_late_days' => $row->lateDays->count()+1,
                                             //     'total_late_hours' => $row->lateHours,
                                             // ]);
+                                            //.... insert 
 
                                             $lateCount = $row->lateDays->count() + 1;
                                             $cycle = $lateDeductionPolicy->max_late_days + 1;
