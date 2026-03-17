@@ -24,7 +24,7 @@ return new class extends Migration {
             $table->dateTime('deleted_at')->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->foreign('employee_id')->references('id')->on('users');
             $table->foreign('created_user_id')->references('id')->on('users');

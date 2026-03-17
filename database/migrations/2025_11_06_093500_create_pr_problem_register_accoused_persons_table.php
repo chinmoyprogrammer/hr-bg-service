@@ -15,12 +15,12 @@ return new class extends Migration {
 
             $table->unsignedBigInteger('created_user_id');
             $table->timestamp('created_at')->useCurrent();
-
+            $table->timestamp('updated_at')->useCurrent();
             $table->unsignedBigInteger('deleted_by')->nullable();
             $table->dateTime('deleted_at')->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->index(['pr_id']);
             $table->index(['user_id']);

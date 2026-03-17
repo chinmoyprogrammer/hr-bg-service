@@ -17,7 +17,7 @@ return new class extends Migration {
             $table->string('payment_reference', 255)->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255);
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->unsignedBigInteger('created_user_id');
             $table->unsignedBigInteger('updated_user_id')->nullable();

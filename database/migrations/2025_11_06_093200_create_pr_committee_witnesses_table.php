@@ -22,7 +22,7 @@ return new class extends Migration {
             $table->dateTime('deleted_at')->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->index(['pr_committee_id']);
             $table->index(['witness_user_id']);
