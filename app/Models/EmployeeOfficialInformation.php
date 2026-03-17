@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class EmployeeOfficialInformation extends Model
 {
@@ -55,7 +56,8 @@ class EmployeeOfficialInformation extends Model
         'updated_at',
         'updated_user_id',
         'deleted_by',
-        'deleted_at'
+        'deleted_at',
+        'shift_id'
     ];
 
     public $timestamps = false;
@@ -84,6 +86,28 @@ class EmployeeOfficialInformation extends Model
     public function hasLeavePolicyDetail()
     {
         return $this->hasMany(LeavePolicyDetail::class, 'leave_policy_id', 'leave_policy_id');
+    }
+
+    public function hasLateDeductionPolicy()
+    {
+        return $this->hasOne(LateDeductionPolicy::class, 'id', 'late_deduction_policy_id');
+    }
+
+    //.... count late days till the date
+    /**
+     * Count late days for the employee in the last 35 days
+     *
+     * @return int
+     */
+    public function lateDays()
+    {
+        return DB::table('employee_attendance_status_logs')
+            ->where('employee_user_id', $this->employee_user_id)
+            // ->whereBetween('attendance_date', 
+            //                 [ date('Y-m-d', strtotime('-35 days')), date('Y-m-d')]
+            //             )
+            // ->where('attendance_status', 2)->get()
+            ;
     }
 
 }
