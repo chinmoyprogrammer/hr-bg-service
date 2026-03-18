@@ -47,7 +47,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             ->lazy()
             ->each(function ($user) use(&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeads)
             {
-        
+
                 if($user->loans->count() > 0)
                 {
                     foreach($user->loans as $loan){
@@ -117,11 +117,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         'type' => 'meal',
                         'created_at' => date('Y-m-d H:i:s'),
                     ];
-                    
                 }
-
-
-
 
                 //.... process PR (Jorimana) installments
                 //.... get PR data of this employee
@@ -146,15 +142,15 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ];
 
                     }
-                }    
+                }
 
 
-                
+
                 //.... process and gather other regular salary components(like basic salary, allowances, deductions(attendance related), etc.)
                     //get Payroll salary heads ( individual employee employee salary heads like: basic, medical, House rent etc)
                     //.... get salary components data of this employee
                     $head_amounts = PayrollSalaryHead::where('status', 1)->get();
-                    
+
                     // loop through each head
                     //.... insert salary to TempSalary
                     foreach($head_amounts as $head)
@@ -179,12 +175,93 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ]);
 
                     //...... calculate late deductions
-                    
+
 
                     //.... send notification to every employee that his/her salary is processed
 
                     //deduction type -> 'loan','pr','absent','pf','meal','late','ait'
 
+
+                //.... process meal cost
+                //prent days x meal cost = meal cost deduction
+                //insert into payroll_pre_salary_sheet_deductions table
+
+                $total_present_days = 1; //todo::
+                $absent_days = 0; //todo::
+                $late_days = 0; //todo::
+                $deductable_late_days = 0; //todo::
+
+
+                if($total_present_days > 0 && $user->hasOfficialInformation->is_mealable == 1)
+                {
+                    $total_meal_cost_this_month = $total_present_days * $user->hasOfficialInformation->per_meal_cost;
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'child_data_identifier_key_incoming' => null,
+                        'amount' => $total_meal_cost_this_month,
+                        'type' => 'meal',
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
+
+                // employee AIT calculaiton
+                if($user->hasOfficialInformation->ait_eligible == 1)
+                {
+                    if ($user->hasOfficialInformation->ait_deduction_basis == 'fixed') {
+                        $ait_amount = $user->hasOfficialInformation->ait_amount;
+                    } elseif ($user->hasOfficialInformation->ait_deduction_basis == 'basic') {
+                        $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * ($user->hasOfficialInformation->gross_salary / 2);
+                    } else {
+                        $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
+                    }
+                    $total_present_days * $user->hasOfficialInformation->per_meal_cost;
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'child_data_identifier_key_incoming' => null,
+                        'amount' => $ait_amount,
+                        'type' => 'ait',
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
+
+
+                // employee PF calculaiton
+                if($user->hasOfficialInformation->pf_eligibility_status == 1)
+                {
+                    $employeePfPolicyMaxDeduction = $user->hasOfficialInformation->employeePfPolicy->max_deduction_amount; // 1500
+                    $employeePfAmount = $user->hasOfficialInformation->gross_salary * (2.5 / 100);
+                    if ($employeePfAmount > $employeePfPolicyMaxDeduction) {
+                        $pf_amount = $employeePfPolicyMaxDeduction;
+                    } else {
+                        $pf_amount = $employeePfAmount;
+                    }
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'child_data_identifier_key_incoming' => null,
+                        'amount' => $pf_amount,
+                        'type' => 'pf',
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
+
+                // employee OT calculaiton
+                if($user->hasOfficialInformation->employee_ot_policy_id != null)
+                {
+                    $employeeOtPolicyMaxDeduction = $user->hasOfficialInformation->employeeOtPolicy->max_deduction_amount; // 1500
+                    $employeeOtAmount = $user->hasOfficialInformation->gross_salary * (2.5 / 100);
+                    if ($employeeOtAmount > $employeeOtPolicyMaxDeduction) {
+                        $ot_amount = $employeeOtPolicyMaxDeduction;
+                    } else {
+                        $ot_amount = $employeeOtAmount;
+                    }
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'child_data_identifier_key_incoming' => null,
+                        'amount' => $pf_amount,
+                        'type' => 'pf',
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
             }
         );
 
