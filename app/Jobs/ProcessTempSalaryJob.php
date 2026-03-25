@@ -1,20 +1,22 @@
 <?php
 namespace App\Jobs;
 
-use App\Models\EmployeeOfficialInformation;
-use App\Models\LateAttendanceRecord;
-use App\Models\PayrollPreSalarySheetDeduction;
-use App\Models\PayrollSalaryAdvanceLoanNOtherInstallment;
-use App\Models\PayrollSalaryAdvanceNLoan;
-use App\Models\PayrollSalaryHead;
-use App\Models\PrProblemRegisterAccousedPerson;
 use App\Models\User;
+use App\Models\SalaryHead;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
+use App\Models\PayrollSalaryHead;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Models\LateAttendanceRecord;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Queue\InteractsWithQueue;
+use App\Models\PayrollSalaryAdvanceNLoan;
+use App\Models\EmployeeOfficialInformation;
+use App\Models\EmployeeOtData;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use App\Models\PayrollPreSalarySheetDeduction;
+use App\Models\PrProblemRegisterAccousedPerson;
+use App\Models\PayrollSalaryAdvanceLoanNOtherInstallment;
 
 
 class ProcessTempSalaryJob extends Job implements ShouldQueue
@@ -32,7 +34,6 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
     public function handle(): void
     {
-
         $PayrollPreSalarySheetDeduction = [];
         $PayrollSalaryAdvanceLoanNOtherInstallment = [];
         $PayrollSalarySheetHeads = [];
@@ -179,7 +180,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                     //.... send notification to every employee that his/her salary is processed
 
-                    //deduction type -> 'loan','pr','absent','pf','meal','late','ait'
+                    //deduction type -> 'loan','pr','absent','pf','meal','late','ait', 'ot'
 
 
                 //.... process meal cost
@@ -210,11 +211,14 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     if ($user->hasOfficialInformation->ait_deduction_basis == 'fixed') {
                         $ait_amount = $user->hasOfficialInformation->ait_amount;
                     } elseif ($user->hasOfficialInformation->ait_deduction_basis == 'basic') {
-                        $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * ($user->hasOfficialInformation->gross_salary / 2);
+                        $basic = SalaryHead::where('is_percentage_determiner', true)->orderBy('id', 'desc')->first();
+                        $basicAmount = PayrollSalaryHead::where('employee_user_id', $user->id)->where('salary_head_id', $basic->id)->first()->amount;
+
+                        $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $basicAmount; //calculation to be updated
+
                     } else {
                         $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
                     }
-                    $total_present_days * $user->hasOfficialInformation->per_meal_cost;
 
                     $PayrollPreSalarySheetDeduction[] = [
                         'child_data_identifier_key_incoming' => null,
@@ -229,7 +233,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 if($user->hasOfficialInformation->pf_eligibility_status == 1)
                 {
                     $employeePfPolicyMaxDeduction = $user->hasOfficialInformation->employeePfPolicy->max_deduction_amount; // 1500
-                    $employeePfAmount = $user->hasOfficialInformation->gross_salary * (2.5 / 100);
+                    $employeePfPercentage = SalaryHead::where('id', 12)->first()->percentage;
+                    $employeePfAmount = $user->hasOfficialInformation->gross_salary * ($employeePfPercentage / 100);
                     if ($employeePfAmount > $employeePfPolicyMaxDeduction) {
                         $pf_amount = $employeePfPolicyMaxDeduction;
                     } else {
@@ -247,20 +252,21 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 // employee OT calculaiton
                 if($user->hasOfficialInformation->employee_ot_policy_id != null)
                 {
-                    $employeeOtPolicyMaxDeduction = $user->hasOfficialInformation->employeeOtPolicy->max_deduction_amount; // 1500
-                    $employeeOtAmount = $user->hasOfficialInformation->gross_salary * (2.5 / 100);
-                    if ($employeeOtAmount > $employeeOtPolicyMaxDeduction) {
-                        $ot_amount = $employeeOtPolicyMaxDeduction;
-                    } else {
-                        $ot_amount = $employeeOtAmount;
+                    $employeeOtPolicy = $user->hasOfficialInformation->employeeOtPolicy;
+                    if(now()->toDateString() >= $employeeOtPolicy->effective_date && $employeeOtPolicy->status == 1)
+                    {
+                        $employeeOtAmount = EmployeeOtData::where('employee_user_id', $user->id)
+                                            ->whereYear('ot_date', now()->year)
+                                            ->whereMonth('ot_date', now()->month)
+                                            ->sum('ot_amount');
+                        $PayrollPreSalarySheetDeduction[] = [
+                            'child_data_identifier_key_incoming' => null,
+                            'amount' => $employeeOtAmount,
+                            'type' => 'ot',
+                            'created_at' => date('Y-m-d H:i:s'),
+                        ];
                     }
 
-                    $PayrollPreSalarySheetDeduction[] = [
-                        'child_data_identifier_key_incoming' => null,
-                        'amount' => $pf_amount,
-                        'type' => 'pf',
-                        'created_at' => date('Y-m-d H:i:s'),
-                    ];
                 }
             }
         );
