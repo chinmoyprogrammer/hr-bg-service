@@ -9,19 +9,19 @@ return new class extends Migration {
     {
         Schema::create('pr_committee', function (Blueprint $table) {
             $table->bigIncrements('id');
-
             $table->unsignedBigInteger('pr_id'); // problem register id (cross-module), keeping without FK
+            $table->string('pr_committee_name')->nullable();
             $table->date('deadline');
+            $table->string('remarks', 255)->nullable();
             $table->unsignedBigInteger('created_user_id');
             $table->timestamp('created_at')->useCurrent();
-
-            $table->string('remarks', 255)->nullable();
-
+            $table->unsignedBigInteger('updated_user_id')->nullable();
+            $table->timestamp('updated_at')->useCurrent()->nullable();
             $table->unsignedBigInteger('deleted_by')->nullable();
             $table->dateTime('deleted_at')->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->index(['pr_id']);
             $table->foreign('created_user_id')->references('id')->on('users')->onUpdate('cascade')->onDelete('restrict');

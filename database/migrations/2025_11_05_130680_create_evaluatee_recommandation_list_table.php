@@ -10,6 +10,7 @@ return new class extends Migration {
         Schema::create('evaluatee_recommandation_list', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('evaluator_user_id')->nullable();
+            $table->unsignedBigInteger('evaluatee_user_id');
             $table->unsignedBigInteger('evaluatee_list_id');
             $table->unsignedBigInteger('recommandation_name_id');
             $table->unsignedBigInteger('value')->nullable();
@@ -31,7 +32,7 @@ return new class extends Migration {
             $table->unsignedBigInteger('deleted_by')->nullable();
             $table->dateTime('deleted_at')->nullable();
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->foreign('evaluator_user_id')->references('id')->on('users');
             $table->foreign('evaluatee_list_id')->references('id')->on('evaluatee_list');
