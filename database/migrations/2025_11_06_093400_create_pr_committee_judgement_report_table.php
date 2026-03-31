@@ -23,7 +23,7 @@ return new class extends Migration {
             $table->string('cs_no', 100)->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->unsignedBigInteger('created_user_id');
             $table->dateTime('created_at');

@@ -11,7 +11,7 @@ return new class extends Migration {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('education_level_id');
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
             $table->string('name', 150);
             $table->string('name_bn', 150)->nullable();
             $table->boolean('status')->default(true);

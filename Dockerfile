@@ -27,7 +27,10 @@ RUN echo "#!/bin/sh\n\nwhile true; do\n    inotifywait -r -e modify,create,delet
 
 # Create queue worker start script (copied and runs at runtime with auto-restart)
 COPY start-worker.sh /usr/local/bin/start-worker.sh
-RUN chmod +x /usr/local/bin/start-worker.sh
+#RUN chmod +x /usr/local/bin/start-worker.sh
+
+RUN sed -i 's/\r$//' /usr/local/bin/start-worker.sh \
+    && chmod +x /usr/local/bin/start-worker.sh
 
 # Expose port 80
 EXPOSE 80
@@ -79,10 +82,11 @@ php_admin_value[session.gc_maxlifetime] = 3600\n\
 php_admin_value[date.timezone] = UTC" > /usr/local/etc/php-fpm.d/www.conf
 
 # Set proper permissions and start services with file watching
-CMD sh -c "mkdir -p /var/run/php-fpm && \
-    chown -R www-data:www-data /var/www/html && \
-    chmod -R 755 /var/www/html && \
-    php-fpm -D && \
-    /usr/local/bin/start-worker.sh & \
-    /usr/local/bin/sync-reload.sh & \
-    nginx -g 'daemon off;'"
+# CMD sh -c "mkdir -p /var/run/php-fpm && \
+#     chown -R www-data:www-data /var/www/html && \
+#     chmod -R 755 /var/www/html && \
+#     php-fpm -D && \
+#     /usr/local/bin/start-worker.sh & \
+#     /usr/local/bin/sync-reload.sh & \
+#     nginx -g 'daemon off;'"
+CMD ["sh", "-c", "mkdir -p /var/run/php-fpm && chown -R www-data:www-data /var/www/html && chmod -R 755 /var/www/html && php-fpm -D && /usr/local/bin/start-worker.sh & /usr/local/bin/sync-reload.sh & nginx -g 'daemon off;'"]

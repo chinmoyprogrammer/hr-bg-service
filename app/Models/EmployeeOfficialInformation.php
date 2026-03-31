@@ -73,6 +73,11 @@ class EmployeeOfficialInformation extends Model
         return $this->hasOne(EmployeeOtPolicy::class, 'id', 'employee_ot_policy_id');
     }
 
+    public function employeePfPolicy()
+    {
+        return $this->hasOne(EmployeePfPolicy::class, 'id', 'employee_pf_policy_id');
+    }
+
     public function hasWeekendDays()
     {
         return $this->hasMany(EmployeeWeekendDays::class, 'employee_user_id', 'employee_user_id');
@@ -103,7 +108,7 @@ class EmployeeOfficialInformation extends Model
     {
         return DB::table('employee_attendance_status_logs')
             ->where('employee_user_id', $this->employee_user_id)
-            // ->whereBetween('attendance_date', 
+            // ->whereBetween('attendance_date',
             //                 [ date('Y-m-d', strtotime('-35 days')), date('Y-m-d')]
             //             )
             // ->where('attendance_status', 2)->get()

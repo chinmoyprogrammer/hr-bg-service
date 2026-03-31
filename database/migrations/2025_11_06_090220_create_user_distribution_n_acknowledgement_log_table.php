@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        Schema::create('user_distribution_n_acknowledgement_log', function (Blueprint $table) {
+        Schema::create('user_distribution_and_acknowledgement_log', function (Blueprint $table) {
             $table->bigIncrements('id');
 
             $table->string('child_data_identifier_key_incoming', 255);
@@ -18,6 +18,7 @@ return new class extends Migration {
 
             $table->unsignedTinyInteger('acknowledgement_answer')->nullable(); // 1=yes,2=no,3=other
             $table->dateTime('acknowledgement_answer_at')->nullable();
+            $table->unsignedTinyInteger('meeting_acknowledgement')->nullable();
 
             $table->json('user_device_n_location_info')->nullable();
 

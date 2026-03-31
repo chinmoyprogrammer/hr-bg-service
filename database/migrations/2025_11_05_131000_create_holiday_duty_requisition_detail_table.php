@@ -23,7 +23,7 @@ return new class extends Migration {
             $table->dateTime('deleted_at')->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             // Use a shorter explicit FK name to avoid MySQL 64-char limit
             $table->foreign('holiday_duty_requisition_id', 'fk_hol_req_det_req')
