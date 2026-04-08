@@ -178,6 +178,6 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
 
     public function loans()
     {
-        return $this->hasOne(PayrollSalaryAdvanceNLoan::class, 'employee_user_id', 'id');
+        return $this->hasMany(PayrollSalaryAdvanceNLoan::class, 'employee_user_id', 'id');
     }
 }
