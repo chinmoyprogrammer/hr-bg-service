@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Traits\CommonRelationships;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\LeavePolicyDetail;
 
 class LeavePolicy extends Model
 {
@@ -10,6 +12,10 @@ class LeavePolicy extends Model
     protected $table = 'leave_policies';
     protected $primaryKey = 'id';
     protected $guarded = [];
+    use CommonRelationships;
+
+    protected $relationModel = \App\Models\LeavePolicyDetail::class;
+
 
     public function hasDetail()
     {

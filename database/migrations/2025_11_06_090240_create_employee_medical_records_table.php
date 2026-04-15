@@ -24,7 +24,7 @@ return new class extends Migration {
             $table->decimal('compensation_amount', 22, 2)->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->unsignedBigInteger('created_user_id');
             $table->unsignedBigInteger('updated_user_id')->nullable();

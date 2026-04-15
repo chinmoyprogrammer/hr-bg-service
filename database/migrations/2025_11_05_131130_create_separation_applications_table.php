@@ -28,7 +28,7 @@ return new class extends Migration {
             $table->tinyInteger('deleted_by')->default(0);
             $table->timestamp('deleted_at')->nullable();
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->foreign('separation_type_id')->references('id')->on('separation_types');
             $table->foreign('created_user_id')->references('id')->on('users');

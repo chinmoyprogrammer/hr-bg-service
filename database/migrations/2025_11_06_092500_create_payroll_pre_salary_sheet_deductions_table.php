@@ -14,7 +14,7 @@ return new class extends Migration {
             $table->unsignedTinyInteger('type'); // 1=penalty
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->timestamp('created_at')->useCurrent();
             $table->unsignedBigInteger('deleted_by')->nullable();

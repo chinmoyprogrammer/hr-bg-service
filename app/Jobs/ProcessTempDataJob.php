@@ -13,6 +13,8 @@ use App\Models\EmployeeOtPolicy;
 use App\Models\EmployeeOtRequisition;
 use App\Models\Holiday;
 use App\Models\HolidayDutyRequisition;
+use App\Models\LateAttendanceRecord;
+use App\Models\LateAttendanceRecordDetail;
 use App\Models\LeaveApplicationDetail;
 use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\Roster;
@@ -58,7 +60,17 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             return;
         }
 
+        //... if dates not of same calender month, return
+        if(date('m', strtotime($startDate)) != date('m', strtotime($endDate)) && date('Y', strtotime($startDate)) != date('Y', strtotime($endDate)))
+        {
+            Log::warning('ProcessTempDataJob dates not of same calender month', [
+                'payload' => $this->payload,
+            ]);
+            return;
+        }
 
+
+        // dates should be in between a calender month
         $startBoundary = (new \Carbon\Carbon($startDate))->startOfDay()->toDateString();
         $endBoundary = (new \Carbon\Carbon($endDate))->endOfDay()->toDateString();
         $jobStart = date('Y-m-d H:i:s');
@@ -89,7 +101,22 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         ->where('effective_date', '<=', $startBoundary)
                         ->where('status', 1);
                 },
-                'hasLeavePolicyDetail'
+                'hasLeavePolicyDetail',
+                'hasLateDeductionPolicy'=>function($query) use ($startBoundary)
+                {
+                    $query
+                        ->where('effective_date', '<=', $startBoundary)
+                        ->where('status', 1);
+                },
+                'lateDays' => function($query) use ($startBoundary, $endBoundary)
+                {
+                    $query
+                        ->whereBetween('attendance_date', 
+                                        [ date('Y-m-01', strtotime($startBoundary)), date('Y-m-t', strtotime($endBoundary))]
+                                    )
+                        ->where('attendance_status', 2)
+                        ;
+                },
             ]
         )
         ->get();
@@ -444,6 +471,121 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                 }
                                 if ($first && strtotime($first->punch_datetime) > strtotime($date . ' ' . $shiftStart ." + $grace minutes")) {
                                     $statusesForLog[] = 2; // Late
+
+                                    //..... calculate late for 4 days or according to policy
+                                    // if crosses the 4 days or according to  late_deduction_policies  table then insert into late_attendance_records  and late_attendance_records _details table
+                                    $lateDeductionPolicy = $row->hasLateDeductionPolicy;
+                                    if($lateDeductionPolicy)
+                                    {
+
+                                        // for deduction basis -> "Day"
+                                        if($lateDeductionPolicy->deduction_basis == "Day" && ( ($row->lateDays->count()+1) % ($lateDeductionPolicy->max_late_days+1) == 0 ) ) 
+                                        {
+                                            //... first check is there any any entry exists for this month for this employee or not
+                                            $lateAttendanceRecord = LateAttendanceRecord::with('lateAttendanceRecordDetails')
+                                            ->where('employee_user_id', $row->employee_user_id)
+                                            ->where('month',  date('m', strtotime($date)))
+                                            ->where('year',  date('Y', strtotime($date)))
+                                            ->first();
+
+                                            // LateAttendanceRecord::with('lateAttendanceRecordDetails')
+                                            // ->where('employee_user_id', $row->employee_user_id)
+                                            // ->where('month',  date('m', strtotime($date)))
+                                            // ->where('year',  date('Y', strtotime($date)))
+                                            // ->delete();
+                                            
+                                            $recordIds = LateAttendanceRecord::where('employee_user_id', $row->employee_user_id)
+                                            ->where('month', date('m', strtotime($date)))
+                                            ->where('year', date('Y', strtotime($date)))
+                                            ->pluck('id');
+                                            
+                                            // delete previous late deduction data of the month of searching date from  late_attendance_records and late_attendance_record_details table
+                                            if ($recordIds->isNotEmpty()) 
+                                            {
+                                                LateAttendanceRecordDetail::whereIn('late_attendance_record_id', $recordIds)->delete();
+                                                LateAttendanceRecord::whereIn('id', $recordIds)->delete();
+                                            }
+
+
+
+
+
+
+                                            // $lateAttendanceRecord = LateAttendanceRecord::create([
+                                            //     'employee_user_id' => $row->employee_user_id,
+                                            //     'month' => date('m', strtotime($date)),
+                                            //     'year' => date('Y', strtotime($date)),
+                                            //     'total_late_days' => $row->lateDays->count()+1,
+                                            //     'total_late_hours' => $row->lateHours,
+                                            // ]);
+                                            //.... insert 
+
+                                            $lateCount = $row->lateDays->count() + 1;
+                                            $cycle = $lateDeductionPolicy->max_late_days + 1;
+                                            $rowsToInsert = $lateCount / $cycle;
+
+                                            for ($i = 0; $i < $rowsToInsert; $i++) {
+
+                                                $lateRecord = LateAttendanceRecord::create([
+                                                    'employee_user_id' => $row->employee_user_id,
+                                                    'month'            => date('m', strtotime($date)),
+                                                    'year'             => date('Y', strtotime($date)),
+                                                    'created_user_id'  => $systemUserId,
+                                                    'created_at'       => $now,
+                                                ]);  
+
+                                                // Insert first 5 late dates into LateAttendanceRecordDetail for this cycle
+                                                for ($j = 0; $j < $cycle && ($i * $cycle + $j) < $lateCount; $j++) 
+                                                {
+                                                    LateAttendanceRecordDetail::create([
+                                                        'late_attendance_record_id' => $lateRecord->id,
+                                                        'date' => $row->lateDays->sortBy('date')->values()[$i * $cycle + $j]->date,
+                                                        'late_hours' => $row->lateHours,
+                                                    ]);
+                                                }
+                                            }
+
+                                            if ($rowsToInsert === 0) {
+                                                // // collect the last $cycle late days for this employee
+                                                // $lateAttendances = EmployeeAttendance::select('employee_attendance.*')
+                                                //     ->join('employee_attendance_status_logs as log', function ($join) {
+                                                //         $join->on('log.employee_attendance_id', '=', 'employee_attendance.id')
+                                                //             ->where('log.attendance_status', 2); // Late
+                                                //     })
+                                                //     ->where('employee_attendance.employee_user_id', $row->employee_user_id)
+                                                //     ->whereBetween('employee_attendance.date', [
+                                                //         now()->startOfMonth()->toDateString(),
+                                                //         now()->endOfMonth()->toDateString()
+                                                //     ])
+                                                //     ->orderByDesc('employee_attendance.date')
+                                                //     ->limit($cycle)
+                                                //     ->get();
+
+                                                // create late_attendance_records header
+                                                $lateRecord = LateAttendanceRecord::create([
+                                                    'employee_user_id' => $row->employee_user_id,
+                                                    'month'            => date('m', strtotime($date)),
+                                                    'year'             => date('Y', strtotime($date)),
+                                                    'created_user_id'  => $systemUserId,
+                                                    'created_at'       => $now,
+                                                ]);
+
+                                                // insert each late day into late_attendance_record_details
+                                                foreach ($row->lateDays as $late) {
+                                                    LateAttendanceRecordDetail::create([
+                                                        'late_attendance_record_id' => $lateRecord->id,
+                                                        'attendance_date'           => $late->date,
+                                                        'created_user_id'           => $systemUserId,
+                                                        'created_at'                => $now,
+                                                    ]);
+                                                }
+                                            }
+
+                                            
+                                        }
+                                    }
+
+
                                 }
                                 
                                 
@@ -458,6 +600,13 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                                         ;
                                 if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0)
                                     {
+                                        if($empHoliday)
+                                        {
+                                            $statusesForLog[] = 20; // Weekend  Duty
+                                        }else{
+                                            $statusesForLog[] = 21; // Public Holiday Duty
+                                        }
+                                        
                                         $statusesForLog[] = 14; // Holiday Duty
                                     }
 
@@ -486,6 +635,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                                         'created_user_id'          => $systemUserId,
                                         'created_at'               => $now,
                                     ]);
+                                   // $statusesForLog[] = 22; // Leave Compensated
 
                                     if($publicHoliday->holiday_type_id == 10) // leave type is "Festival Holiday", then provide money
                                     {

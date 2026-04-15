@@ -73,6 +73,7 @@ $app->singleton(
 */
 
 $app->configure('app');
+$app->configure('logging');
 $app->configure('queue');
 
 /*

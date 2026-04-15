@@ -3,6 +3,8 @@ FROM php:8.2-fpm
 # Install nginx and inotify-tools for file watching
 RUN apt-get update && apt-get install -y nginx inotify-tools
 
+RUN rm -f /etc/nginx/sites-enabled/default
+
 # Set working directory
 WORKDIR /var/www/html
 

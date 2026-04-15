@@ -53,7 +53,7 @@ return new class extends Migration {
             $table->timestamp('deleted_at')->nullable();
 
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
 
             $table->foreign('employee_user_id')->references('id')->on('users')->onUpdate('cascade')->onDelete('set null');
             $table->foreign('department_id')->references('id')->on('departments')->onUpdate('cascade')->onDelete('set null');

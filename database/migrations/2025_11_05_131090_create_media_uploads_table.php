@@ -19,6 +19,7 @@ return new class extends Migration {
             $table->string('extension', 255);
             $table->enum('type', ['image','file','etc'])->default('image');
             $table->string('external_link', 255)->nullable();
+            $table->longText('description')->nullable();
 
             $table->dateTime('created_at');
             $table->dateTime('updated_at')->nullable();
@@ -30,7 +31,7 @@ return new class extends Migration {
 
             $table->string('description', 255)->nullable();
             $table->string('child_data_identifier_key_incoming', 255)->nullable();
-            $table->dateTime('child_data_identifier_key_outgoing')->nullable();
+            $table->string('child_data_identifier_key_outgoing', 255)->nullable();
         });
     }
 
