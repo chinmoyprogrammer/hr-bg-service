@@ -37,6 +37,7 @@ $app->middleware([
 $app->register(App\Providers\AuthServiceProvider::class);
 $app->register(Illuminate\Redis\RedisServiceProvider::class);
 $app->register(Flipbox\LumenGenerator\LumenGeneratorServiceProvider::class);
+$app->register(App\Providers\AttendanceServiceProvider::class);
 // Enable queues and RabbitMQ queue driver
 $app->register(Illuminate\Queue\QueueServiceProvider::class);
 $app->register(VladimirYuldashev\LaravelQueueRabbitMQ\LaravelQueueRabbitMQServiceProvider::class);

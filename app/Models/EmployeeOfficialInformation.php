@@ -106,13 +106,7 @@ class EmployeeOfficialInformation extends Model
      */
     public function lateDays()
     {
-        return DB::table('employee_attendance_status_logs')
-            ->where('employee_user_id', $this->employee_user_id)
-            // ->whereBetween('attendance_date',
-            //                 [ date('Y-m-d', strtotime('-35 days')), date('Y-m-d')]
-            //             )
-            // ->where('attendance_status', 2)->get()
-            ;
+        return $this->hasMany(EmployeeAttendanceStatusLog::class, 'employee_user_id', 'employee_user_id');
     }
 
 }
