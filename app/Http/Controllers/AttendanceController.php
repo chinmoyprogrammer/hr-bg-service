@@ -134,13 +134,15 @@ class AttendanceController extends Controller
         if (!empty($insert_data)) {
             //dd('GGGGGGGG');
             //...Delete all previous data
-            EmployeeAttendanceTemp::truncate();
+            //EmployeeAttendanceTemp::truncate();
             
             //...Insert into temp table
-            EmployeeAttendanceTemp::insert($insert_data);
+            //EmployeeAttendanceTemp::insert($insert_data);
 
             //.... Punch history insert
             // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
+            /* 
+            ------------- Punch history insert ------------- 
             $columns = ['emp_code', 'punch_datetime'];
             $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
             $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
@@ -154,7 +156,7 @@ class AttendanceController extends Controller
                 $bindings[] = $row['punch_datetime'];
             }
 
-            DB::insert($sql, $bindings);
+            DB::insert($sql, $bindings); */
             // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
             //     'inserted' => count($insert_data),
             // ]);
