@@ -10,6 +10,8 @@ class EmployeeAttendance extends Model
     protected $primaryKey = 'id';
     public $timestamps = false;
 
+    public $guarded = [];
+
     
 
 }
