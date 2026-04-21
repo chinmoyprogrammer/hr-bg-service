@@ -104,15 +104,49 @@ class EmployeeOfficialInformation extends Model
      *
      * @return int
      */
-    public function lateDays()
+    // public function lateDays()
+    // {
+    //     return DB::table('employee_attendance_status_logs')
+    //         ->where('employee_user_id', $this->employee_user_id)
+    //         // ->whereBetween('attendance_date',
+    //         //                 [ date('Y-m-d', strtotime('-35 days')), date('Y-m-d')]
+    //         //             )
+    //         // ->where('attendance_status', 2)->get()
+    //         ;
+    // }
+
+
+    public function attendanceLogs()
     {
-        return DB::table('employee_attendance_status_logs')
-            ->where('employee_user_id', $this->employee_user_id)
-            // ->whereBetween('attendance_date',
-            //                 [ date('Y-m-d', strtotime('-35 days')), date('Y-m-d')]
-            //             )
-            // ->where('attendance_status', 2)->get()
-            ;
+        //EmployeeOfficialInformation.employee_user_id = employee_attendance_status_logs . employee_user_id
+        //where attendance_status = 0
+        //count()
+        return $this->hasMany(EmployeeAttendanceStatusLog::class, 'employee_user_id', 'employee_user_id');
+    }
+
+    // has late_attendance_records // this is basically for "deductable" late attendance records
+    public function hasLateAttendanceRecords()
+    {
+        return $this->hasMany(LateAttendanceRecord::class, 'employee_user_id', 'employee_user_id');
+    }
+
+    // has salary stracture
+    public function hasSalaryStructure()
+    {
+        return $this->hasOne(PayrollSalaryHead::class, 'employee_user_id', 'employee_user_id');
+    }
+
+
+    // has prProblemRegisterAccoused Person
+    public function hasPrProblemRegisterAccousedPerson()
+    {
+        return $this->hasOne(PrProblemRegisterAccousedPerson::class, 'user_id', 'employee_user_id');
+    }
+
+    //has OT data
+    public function hasOTData()
+    {
+        return $this->hasOne(EmployeeOtData::class, 'employee_user_id', 'employee_user_id');
     }
 
 }
