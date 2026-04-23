@@ -8,4 +8,6 @@ class EmployeeAttendanceStatusLog extends Model
 {
     protected $table = 'employee_attendance_status_logs';
     public $timestamps = false;
+
+    public $guarded = [];
 }
