@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\EmployeeOfficialInformation;
+use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -27,191 +28,310 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
 
     public function handle(): void
     {
-
+        
+        /*
+         * Payload inputs
+         *
+         * Example payload:
+         * [
+         *   'year' => 2026,
+         *   'holiday_type_id' => 8,
+         *   'employee_user_ids' => [101, 102] // optional
+         * ]
+         */
         $year = (int) ($this->payload['year'] ?? (int) date('Y'));
-        $holidayTypeId = (int) ($this->payload['holiday_type_id'] ?? 8); // Default to Weekend Holiday
+        $weekendHolidayTypeId = (int) ($this->payload['holiday_type_id'] ?? 8);
         $employeeIds = $this->payload['employee_user_ids'] ?? null;
+        $employeeIds = is_array($employeeIds) ? array_values(array_filter($employeeIds)) : [];
+
         $systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $now = date('Y-m-d H:i:s');
 
-        $q = EmployeeOfficialInformation::with(['hasWeekendDays' => function ($query) {
-            $query->whereNull('deleted_at');
+        /*
+         * Load employees with weekend rules.
+         * `hasWeekendDays` can contain multiple weekend definitions per employee.
+         */
+        $employeesQuery = EmployeeOfficialInformation::with(['hasWeekendDays' => function ($query) {
+            $query->whereNull('deleted_at')->whereNull('deleted_by');
         }]);
-        if (is_array($employeeIds) && !empty($employeeIds)) {
-            $q->whereIn('employee_user_id', $employeeIds);
+        if (!empty($employeeIds)) {
+            $employeesQuery->whereIn('employee_user_id', $employeeIds);
         }
-        $employees = $q->get();
+        $employees = $employeesQuery->get();
 
-        $start = new \Carbon\Carbon("$year-01-01");
-        $end = (new \Carbon\Carbon("$year-12-31"))->endOfDay();
+        $start = Carbon::parse(sprintf('%04d-01-01', $year))->startOfDay();
+        $end = Carbon::parse(sprintf('%04d-12-31', $year))->endOfDay();
 
-        $map = [];
-        $deleteFromDates = [];
+        /*
+         * Build insert rows in-memory (deduped by employee/date/type).
+         */
+        $rowsByKey = [];
+        $i = 0;
+        // dd($employees);
+        foreach ($employees as $employee) {
+            
+            foreach ($employee->hasWeekendDays as $rule) {
+                
+                $dow = (int) $rule->php_week_day_code;
+                $isAlternated = (int) ($rule->is_alternated ?? 0) === 1;
+                $altStart = !empty($rule->alternate_starting_date) ? Carbon::parse($rule->alternate_starting_date)->startOfDay() : Carbon::parse($employee->joining_date)->startOfDay();
 
-        //..... Inserting employee Weekends / Holidays
-        foreach ($employees as $e) {
-            $days = $e->hasWeekendDays;
-            foreach ($days as $d) {
-                $dow = (int) $d->php_week_day_code;
-                $isAlt = (int) ($d->is_alternated ?? 0);
-                $altStartStr = $d->alternate_starting_date ?? null;
-                $altStart = $altStartStr ? new \Carbon\Carbon($altStartStr) : null;
-                if ($isAlt === 1 && !$altStart) {
-                    $altStart = $start->copy();
-                }
-                $altStartDow = null;
-                $yearStartDow = $start->copy();
-                while ((int) $yearStartDow->dayOfWeek !== $dow) {
-                    $yearStartDow->addDay();
-                }
-                if ($altStart) {
-                    $altStartDow = $altStart->copy();
-                    while ((int) $altStartDow->dayOfWeek !== $dow) {
-                        $altStartDow->addDay();
-                    }
-                    if ($isAlt === 1) {
-                        $deleteFromDates[] = $altStart->toDateString();
-                    }
-                }
-                $cursor = $start->copy();
-                while ($cursor->lte($end)) {
-                    if ((int) $cursor->dayOfWeek === $dow) {
-                        $include = true;
-                        if ($isAlt === 1) {
-                            if ($altStartDow) {
-                                if ($cursor->lt($altStart)) {
-                                    $weeks = $yearStartDow->diffInWeeks($cursor);
-                                    $include = ($weeks % 2) === 0;
-                                } else {
-                                    $weeks = $altStartDow->diffInWeeks($cursor);
-                                    $include = ($weeks % 2) === 0;
-                                }
-                            } else {
-                                $weeks = $yearStartDow->diffInWeeks($cursor);
-                                $include = ($weeks % 2) === 0;
-                            }
-                        }
-                        if ($include) {
-                            $dateStr = $cursor->toDateString();
-                            $key = $dateStr . '|' . $holidayTypeId;
-                            $map[$key] = [
-                                'employee_user_id' => $e->employee_user_id,
-                                'name' => 'Weekend',
-                                'day' => (int) $cursor->format('d'),
-                                'month' => (int) $cursor->format('m'),
-                                'year' => $year,
-                                'date' => $dateStr,
-                                'holiday_type_id' => $holidayTypeId,
-                                'recurring' => 0,
-                                'recurring_rule' => null,
-                                'description' => null,
-                                'status' => 'Active',
-                                'created_user_id' => $systemUserId,
-                                'updated_user_id' => null,
-                                'created_at' => date('Y-m-d H:i:s'),
-                                'updated_at' => null,
-                                'deleted_by' => null,
-                                'deleted_at' => null,
-                                'child_data_identifier_key_incoming' => null,
-                                'child_data_identifier_key_outgoing' => null,
-                            ];
-                        }
-                    }
-                    $cursor->addDay();
+                foreach ($this->generateWeekendDates($start, $end, $dow, $isAlternated, $altStart) as $date) {
+                    $i++;
+                    $dateStr = $date->toDateString();
+                    $key = $dateStr . '|' . $weekendHolidayTypeId.$employee->employee_user_id;
+                    $rowsByKey[$key] = $this->buildHolidayRow([
+                        'employee_user_id' => $rule->employee_user_id,
+                        'name' => 'Weekend',
+                        'date' => $dateStr,
+                        'holiday_type_id' => $weekendHolidayTypeId,
+                        'recurring' => 0,
+                        'recurring_rule' => null,
+                        'description' => null,
+                        'created_user_id' => $systemUserId,
+                        'created_at' => $now,
+                    ]);
                 }
             }
         }
+        // dd("Total rows: ", $i);
 
-        try {
+        /*
+         * Public holidays (global-only): inserted once per date/type.
+         * To avoid duplicates, only insert global public holidays when processing ALL employees.
+         */
+        //Log::info('Inserting weekend holidays for year ',[$employeeIds]);
 
-            //.... Inserting 
+        if (empty($employeeIds) || count($employeeIds) == 0) {
+            // dd($this->buildGlobalPublicHolidayRows($year, $systemUserId, $now), $year,$systemUserId,$now);
+            //Log::info('Inserting global public holidays for year ->' . $this->buildGlobalPublicHolidayRows($year, $systemUserId, $now));
 
+            foreach ($this->buildGlobalPublicHolidayRows($year, $systemUserId, $now) as $row) {
+                //Log::info('Inserting global public holiday: ' . $row['name'], $row);
+                $key = 'global|' . $row['date'] . '|' . $row['holiday_type_id'];
+                $rowsByKey[$key] = $row;
+            }
+        }
 
-            $types = DB::table('holiday_types')
-                ->select(['id','title','day_month_collection'])
-                ->whereNotNull('day_month_collection')
+        /*
+         * Delete old data of the given year, then insert the newly generated rows.
+         *
+         * - If `employee_user_ids` is provided: delete rows for those employees only.
+         * - If not provided: delete all rows for that year (including global rows).
+         */
+        DB::transaction(function () use ($year, $employeeIds, $weekendHolidayTypeId, $rowsByKey) {
+            $deleteQuery = DB::table('holidays')->where('year', $year);
+            if (!empty($employeeIds)) {
+                $deleteQuery->where('holiday_type_id', $weekendHolidayTypeId);
+            }
+            $deleteQuery->delete();
+
+            $rows = array_values($rowsByKey);
+            foreach (array_chunk($rows, 500) as $chunk) {
+                DB::table('holidays')->insert($chunk);
+            }
+        });
+    }
+
+    /*
+     * Weekend date generator (supports alternated weekends with an optional starting date).
+     *
+     * - `$dow` is PHP/Carbon dayOfWeek (0=Sunday .. 6=Saturday).
+     * - If alternated: include every other week; phase can restart from `$altStart`.
+     */
+    private function generateWeekendDates(Carbon $start, Carbon $end, int $dow, bool $isAlternated, ?Carbon $altStart): array
+    {
+        $first = $start->copy();
+        while ((int) $first->dayOfWeek !== $dow) {
+            $first->addDay();
+        }
+
+        if (!$isAlternated) {
+            $dates = [];
+            for ($d = $first->copy(); $d->lte($end); $d->addWeek()) {
+                $dates[] = $d->copy();
+            }
+            return $dates;
+        }
+
+        $altStart = $altStart ?: $start->copy();
+        $altStartDow = $altStart->copy();
+        while ((int) $altStartDow->dayOfWeek !== $dow) {
+            $altStartDow->addDay();
+        }
+
+        $dates = [];
+        for ($d = $first->copy(); $d->lte($end); $d->addWeek()) {
+            if ($d->lt($altStart)) {
+                $weeks = $first->diffInWeeks($d);
+                if (($weeks % 2) === 0) {
+                    $dates[] = $d->copy();
+                }
+                continue;
+            }
+
+            $weeks = $altStartDow->diffInWeeks($d);
+            if (($weeks % 2) === 0) {
+                $dates[] = $d->copy();
+            }
+        }
+
+        return $dates;
+    }
+
+    /*
+     * Read holiday_types.day_month_collection and produce global holiday rows for the year.
+     *
+     * Supported formats for day_month_collection:
+     * - JSON array: [{"date":"01-01","description":"New Year"}, ...]
+     * - JSON array: ["01-01","02-21", ...]
+     * - Plain string: 01-01, 02-21 (comma/space/newline separated)
+     */
+    private function buildGlobalPublicHolidayRows(int $year, int $systemUserId, string $now): array
+    {
+        $types = DB::table('holiday_types')
+            ->select(['id', 'title', 'day_month_collection'])
+            ->whereNotNull('day_month_collection')
             ->whereRaw('TRIM(day_month_collection) <> ""')
-            ->where('status',1)
-            ->where('for_year',date('Y'))
-                ->get();
-            if (empty($types)) 
-            { 
-                Log::error('No holiday types found for the year ' . date('Y').', File: InsertWeekendHolidaysJob, Line: ' . __LINE__);
-                throw new \Exception('No holiday types found for the year ' . date('Y'));
+            ->where('status', 1)
+            ->where('for_year', $year)
+            ->get();
 
+            // dd('types',$types);
+        if ($types->isEmpty()) {
+            Log::warning('No holiday types found for year ' . $year . ' (InsertWeekendHolidaysJob)');
+            return [];
+        }
+
+        $rows = [];
+        foreach ($types as $t) {
+
+            $items = $this->parseDayMonthCollection($t->day_month_collection);
+            foreach ($items as $item) {
+                $mmdd = $item['date'] ?? null;
+                // dd('items',is_string($mmdd));
+                $description = $item['description'] ?? null;
+                // if (trim($mmdd) === '' || $mmdd === 'null') {
+                //     continue;
+                // }
+
+                //$dateStr = $this->toYearDateString($year, $mmdd);
+                // if (!$dateStr) {
+                //     continue;
+                // }
+                
+
+                $rows[] = $this->buildHolidayRow([
+                    'employee_user_id' => null,
+                    'name' => (string) $t->title,
+                    'date' => $mmdd,
+                    'holiday_type_id' => (int) $t->id,
+                    'recurring' => 1,
+                    'recurring_rule' => 'Yearly',
+                    'description' => $description,
+                    'created_user_id' => $systemUserId,
+                    'created_at' => $now,
+                ]);
             }
-            foreach ($types as $t) {
-                $raw = $t->day_month_collection;
-                $items = [];
-                if (is_string($raw)) {
-                    $trim = trim($raw);
-                    if ($trim !== '' && strtolower($trim) !== 'null') {
-                        $decoded = json_decode($trim, true);
-                        if (is_array($decoded)) {
-                            $items = $decoded;
-                        } else {
-                            $norm = str_replace(['[',']','"'], '', $trim);
-                            $parts = preg_split('/[\s,\n\r]+/', $norm);
-                            foreach ($parts as $p) {
-                                $p = trim($p);
-                                if ($p !== '') { $items[] = ['date' => $p, 'description' => null]; }
-                            }
-                        }
-                    }
-                } elseif (is_array($raw)) {
-                    $items = $raw;
-                }
-                foreach ($items as $item) {
-                    $mmdd = is_array($item) ? ($item['date'] ?? null) : $item;
-                    $description = is_array($item) ? ($item['description'] ?? null) : null;
-                    if (!is_string($mmdd)) { continue; }
-                    $s = str_replace(' ', '', $mmdd);
-                    $s = str_replace('/', '-', $s);
-                    if (preg_match('/^\d{2}-\d{2}$/', $s) !== 1) { continue; }
-                    [$mm, $dd] = explode('-', $s);
-                    $dateStr = sprintf('%04d-%02d-%02d', $year, (int)$mm, (int)$dd);
-                    try {
-                        $c = new \Carbon\Carbon($dateStr);
-                    } catch (\Throwable $e2) {
+        }
+        // dd($rows);
+        return $rows;
+    }
+
+    private function parseDayMonthCollection(mixed $raw): array
+    {
+        $items = [];
+
+        if (is_string($raw)) {
+            $trim = trim($raw);
+            if ($trim === '' || strtolower($trim) === 'null') {
+                return [];
+            }
+
+            $decoded = json_decode($trim, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $entry) {
+                    if (is_array($entry)) {
+                        $items[] = [
+                            'date' => $entry['date'] ?? null,
+                            'description' => $entry['description'] ?? null,
+                        ];
                         continue;
                     }
-                    $key = $dateStr . '|' . $t->id;
-                    $map[$key] = [
-                        'employee_user_id' => $e->employee_user_id,
-                        'name' => $t->title,
-                        'day' => (int) $c->format('d'),
-                        'month' => (int) $c->format('m'),
-                        'year' => $year,
-                        'date' => $dateStr,
-                        'holiday_type_id' => (int) $t->id,
-                        'recurring' => 1,
-                        'recurring_rule' => 'Yearly',
-                        'description' => $description,
-                        'status' => 'Active',
-                        'created_user_id' => $systemUserId,
-                        'updated_user_id' => null,
-                        'created_at' => date('Y-m-d H:i:s'),
-                        'updated_at' => null,
-                        'deleted_by' => null,
-                        'deleted_at' => null,
-                        'child_data_identifier_key_incoming' => null,
-                        'child_data_identifier_key_outgoing' => null,
-                    ];
+                    if (is_string($entry)) {
+                        $items[] = ['date' => $entry, 'description' => null];
+                    }
+                }
+                return $items;
+            }
+
+            $norm = str_replace(['[', ']', '"'], '', $trim);
+            $parts = preg_split('/[\s,\n\r]+/', $norm);
+            foreach ($parts as $p) {
+                $p = trim((string) $p);
+                if ($p !== '') {
+                    $items[] = ['date' => $p, 'description' => null];
                 }
             }
-        } catch (\Throwable $e) {
+            return $items;
         }
 
-        if (!empty($map)) {
-            if (!empty($deleteFromDates)) {
-                $from = min($deleteFromDates);
-                DB::table('holidays')
-                    ->where('name', 'Weekend')
-                    ->where('date', '>=', $from)
-                    ->delete();
-            }
-            foreach (array_chunk(array_values($map), 500) as $chunk) {
-                DB::table('holidays')->insertOrIgnore($chunk);
+        if (is_array($raw)) {
+            foreach ($raw as $entry) {
+                if (is_array($entry)) {
+                    $items[] = [
+                        'date' => $entry['date'] ?? null,
+                        'description' => $entry['description'] ?? null,
+                    ];
+                    continue;
+                }
+                if (is_string($entry)) {
+                    $items[] = ['date' => $entry, 'description' => null];
+                }
             }
         }
+
+        return $items;
+    }
+
+    private function toYearDateString(int $year, string $mmdd): ?string
+    {
+        $s = str_replace(' ', '', $mmdd);
+        $s = str_replace('/', '-', $s);
+        if (preg_match('/^\d{2}-\d{2}$/', $s) !== 1) {
+            return null;
+        }
+
+        [$mm, $dd] = explode('-', $s);
+        $dateStr = sprintf('%04d-%02d-%02d', $year, (int) $mm, (int) $dd);
+
+        try {
+            Carbon::parse($dateStr);
+            return $dateStr;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function buildHolidayRow(array $data): array
+    {
+        $date = Carbon::parse($data['date']);
+
+        return [
+            'employee_user_id' => $data['employee_user_id'],
+            'name' => $data['name'],
+            'day' => (int) $date->format('d'),
+            'month' => (int) $date->format('m'),
+            'year' => (int) $date->format('Y'),
+            'date' => $data['date'],
+            'holiday_type_id' => (int) $data['holiday_type_id'],
+            'recurring' => (int) ($data['recurring'] ?? 0),
+            'recurring_rule' => $data['recurring_rule'] ?? null,
+            'description' => $data['description'] ?? null,
+            'status' => 'Active',
+            'created_user_id' => (int) ($data['created_user_id'] ?? 1),
+            'updated_user_id' => null,
+            'created_at' => $data['created_at'] ?? date('Y-m-d H:i:s'),
+        ];
     }
 }
