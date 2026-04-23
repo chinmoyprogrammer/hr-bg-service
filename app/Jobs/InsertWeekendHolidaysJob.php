@@ -121,8 +121,10 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
          */
         DB::transaction(function () use ($year, $employeeIds, $weekendHolidayTypeId, $rowsByKey) {
             $deleteQuery = DB::table('holidays')->where('year', $year);
-            if (!empty($employeeIds)) {
-                $deleteQuery->where('holiday_type_id', $weekendHolidayTypeId);
+           if (!empty($employeeIds) && count($employeeIds) > 0)  {
+                $deleteQuery->where('holiday_type_id', $weekendHolidayTypeId)
+                ->whereIn('employee_user_id', $employeeIds)
+                ;
             }
             $deleteQuery->delete();
 
