@@ -49,10 +49,10 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                             $query->where('is_fully_paid', 0);
                             },
                         'hasOfficialInformation.attendanceLogs' => function($query) use($payload) {
-                                $query->whereBetween('attendance_date',    
+                                $query->whereBetween('attendance_date',  [  
                                     date('Y-m-01', strtotime($payload['salary_calculate_month_year'])), 
                                     date('Y-m-t', strtotime($payload['salary_calculate_month_year']))
-                                );
+                                ]);
                             },
                         'hasOfficialInformation.hasLateAttendanceRecords' => function($query) use($payload) { //// this is basically for "deductable" late attendance records
                             $query
@@ -267,7 +267,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $pr = $user->hasOfficialInformation->hasPrProblemRegisterAccousedPerson;
 
                 $total_pr_installment_amount = 0;
-                if($pr->count() > 0)
+                if($pr != null && $pr->count() > 0)
                 {
                     // loop through each PR
                     foreach($pr as $item)
@@ -387,7 +387,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
                 // employee PF calculaiton
-                if($user->hasOfficialInformation->pf_eligibility_status == 1)
+                if($user->hasOfficialInformation->pf_eligibility_status == 1 && $user->hasOfficialInformation->employeePfPolicy != null)
                 {
                     $employeePfPolicyMaxDeduction = $user->hasOfficialInformation->employeePfPolicy->max_deduction_amount; // 1500
                     // $employeePfPercentage = SalaryHead::where('id', 12)->first()->percentage;
@@ -423,11 +423,11 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 if($user->hasOfficialInformation->employee_ot_policy_id != null)
                 {
                     $employeeOtPolicy = $user->hasOfficialInformation->employeeOtPolicy;
-                    if(time() >= strtotime($user->hasOfficialInformation->employeeOtPolicy->effective_date) && $employeeOtPolicy->status == 1)
+                    if(time() >= strtotime($user->hasOfficialInformation->employeeOtPolicy->effective_date) && $employeeOtPolicy->status == 1 && $user->hasOfficialInformation->hasOTData != null)
                     {
                         $employeeOtAmount = $user->hasOfficialInformation->hasOTData
-                                            ->whereYear('ot_date', date('Y'))
-                                            ->whereMonth('ot_date', date('m'))
+                                            ->where('ot_date', date('Y'))
+                                            ->where('ot_date', date('m'))
                                             ->sum('ot_amount');
                         $PayrollPreSalarySheetDeduction[] = [
                             'child_data_identifier_key_incoming' => null,
