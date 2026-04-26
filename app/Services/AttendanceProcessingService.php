@@ -382,7 +382,7 @@ class AttendanceProcessingService
 
         if (
             $lateDeductionPolicy->deduction_basis === 'Day' &&
-            ($row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)) === 0
+            (!empty($row->lateDays) && $row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)) === 0
         ) {
             // Purge existing month records and rebuild from scratch
             $recordIds = LateAttendanceRecord::where('employee_user_id', $row->employee_user_id)
@@ -395,7 +395,7 @@ class AttendanceProcessingService
                 LateAttendanceRecord::whereIn('id', $recordIds)->delete();
             }
 
-            $lateCount = $row->lateDays->count();
+            $lateCount = !empty($row->lateDays) ? $row->lateDays->count() : 0;
             $cycle     = $lateDeductionPolicy->max_late_days + 1;
             $rowsToInsert = intdiv($lateCount, $cycle);
 
@@ -454,7 +454,8 @@ class AttendanceProcessingService
         }
 
         $hasApprovedRequisition = $dutyOnDate
-            ->where('requested_by_user_id', $row->employee_user_id)
+            ->where('employee_user_id', $row->employee_user_id)
+            ->where('duty_date', $date)
             ->isNotEmpty();
 
         if (!$hasApprovedRequisition) {

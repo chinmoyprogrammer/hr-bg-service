@@ -79,7 +79,13 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     date('Y-m-t',  strtotime($endBoundary)),
                 ])
                 ->where('attendance_status', 2),
-        ])->get();
+        ])
+        ->whereIn('emp_code', function ($q) {
+            $q->select('emp_code')
+            ->from('employee_attendance_temp')
+            ->distinct();
+        })
+        ->get();
 
         $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)
             ->orderBy('effective_date', 'desc')
@@ -93,24 +99,41 @@ class ProcessTempDataJob extends Job implements ShouldQueue
         $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
             ->whereNull('employee_user_id')
             ->get()->keyBy('date');
+        /* if($publicHolidays->isNotEmpty()){
+            Log::warning('public holiday:', ['public holiday:' => $publicHolidays]);
+            return;
+        } */
 
         $employeeHolidaysByEmp = Holiday::whereBetween('date', [$startDate, $endDate])
             ->whereNotNull('employee_user_id')
             ->get()
             ->groupBy('employee_user_id')
             ->map(fn($c) => $c->keyBy('date'));
+        /* if($employeeHolidaysByEmp->isNotEmpty()){
+            Log::warning('employee holiday:', ['employee holiday:' => $employeeHolidaysByEmp]);
+            return;
+        } */
+        
 
-        $holidayDutyRequisitions = HolidayDutyRequisition::where('date_from', '>=', $startDate)
+        $holidayDutyRequisitions = HolidayDutyRequisition::whereBetween('duty_date', [$startDate, $endDate])
             ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
-            ->where('date_to', '<=', $endDate)
             ->where('holiday_duty_requisitions.status', 'Approved')
             ->whereNotNull('holiday_duty_requisitions.approved_at')
             ->get();
+        /* if($holidayDutyRequisitions->isNotEmpty()){
+            Log::warning('holiday Requisition:', ['holiday Requisition:' => $holidayDutyRequisitions]);
+            return;
+        } */
 
-        $otRequisitions = EmployeeOtRequisition::where('ot_date_from', '>=', $startDate)
-            ->where('ot_date_to', '<=', $endDate)
+        $otRequisitions = EmployeeOtRequisition::whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$startDate])
+            ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$endDate])
+            ->whereNotNull('approval_date')
             ->get()
             ->keyBy('employee_user_id');
+        /* if($otRequisitions->isNotEmpty()){
+            Log::warning('OT Requisition:', ['OT Requisition:' => $otRequisitions]);
+            return;
+        } */
 
         // ── Delete existing records for the date range ────────────────────────
         $attRecordIds = EmployeeAttendance::whereIn('date', $dates)->pluck('id');
@@ -120,16 +143,19 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->selectRaw('SUM(leave_count) as leave_count, employee_leave_balance_id')
                 ->groupBy('employee_leave_balance_id')
                 ->get();
-
+            /* if($totalLeaveAchieved->isNotEmpty()){
+                Log::warning('totalLeaveAchieved:', ['totalLeaveAchieved:' => $totalLeaveAchieved]);
+                return;
+            } */
             foreach ($totalLeaveAchieved as $item) {
                 EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
                     ->decrement('current_balance', $item->leave_count);
             }
 
-            EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
             EmployeeAttendanceStatusLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
             PayrollAccruedAllowanceIncome::whereIn('employee_attendance_id', $attRecordIds)->delete();
             EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
+            EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
         }
 
         // ── Process every employee × date ────────────────────────────────────
