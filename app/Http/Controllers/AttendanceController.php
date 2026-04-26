@@ -48,6 +48,21 @@ class AttendanceController extends Controller
         $startTime = $request->input('start_time');
         $endTime   = $request->input('end_time');
 
+
+        $payload = [
+            'message' => "HHH",
+            'start_date' => $startTime,
+            'end_date' => $endTime,
+        ];
+
+        $queueName = 'processTempData_queue';
+        // Dispatch a proper queued job that a RabbitMQ worker can consume automatically
+        dispatch((new ProcessTempDataJob($payload))
+            ->onQueue($queueName)
+            ->onConnection('rabbitmq'));
+
+        die;
+
         // Increase timeout to 120 seconds and add retry logic to handle transient network issues
         $attendance_data = Http::timeout(120)
             ->retry(3, 5000) // 3 retries, 5 second delay between retries
@@ -134,15 +149,13 @@ class AttendanceController extends Controller
         if (!empty($insert_data)) {
             //dd('GGGGGGGG');
             //...Delete all previous data
-            //EmployeeAttendanceTemp::truncate();
+            EmployeeAttendanceTemp::truncate();
             
             //...Insert into temp table
-            //EmployeeAttendanceTemp::insert($insert_data);
+            EmployeeAttendanceTemp::insert($insert_data);
 
             //.... Punch history insert
             // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
-            /* 
-            ------------- Punch history insert ------------- 
             $columns = ['emp_code', 'punch_datetime'];
             $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
             $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
@@ -156,7 +169,7 @@ class AttendanceController extends Controller
                 $bindings[] = $row['punch_datetime'];
             }
 
-            DB::insert($sql, $bindings); */
+            DB::insert($sql, $bindings);
             // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
             //     'inserted' => count($insert_data),
             // ]);

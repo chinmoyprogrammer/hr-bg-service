@@ -56,7 +56,7 @@ if (!function_exists('calculateOtHours'))
         $special_allowance_eligibility = $otPolicy?->special_allowance_eligibility ?? 0;
         
         $workingHours = strtotime($lastPunch->punch_datetime) - strtotime($firstPunch->punch_datetime);
-        $workingHours = $workingHours / 60 / 60;
+        $workingHours = $workingHours ?  $workingHours / 60 / 60 : 0;
         $otHours = $workingHours - $shift->lunch_meal_hour - $shift->total_working_hours - $shift_break_duration ;
 
 
