@@ -85,6 +85,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->from('employee_attendance_temp')
             ->distinct();
         })
+        ->where('employee_user_id','=', 208)
         ->get();
 
         $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)

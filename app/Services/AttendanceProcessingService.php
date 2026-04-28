@@ -11,6 +11,8 @@ use App\Models\LeaveApplicationDetail;
 use App\Models\PayrollAccruedAllowanceIncome;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
+
 use function calculateOtHours;
 
 class AttendanceProcessingService
@@ -65,7 +67,7 @@ class AttendanceProcessingService
                 ->exists();
 
         // ── Resolve first / last punches for this date ────────────────────────────
-        [$first, $last] = $this->resolveFirstLastPunch($row, $date);
+        [$first, $last] = $this->resolveFirstLastPunch($row, $date, $shift);
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if ($row->employeeAttendanceTemps->isEmpty()) {
@@ -81,6 +83,7 @@ class AttendanceProcessingService
                 $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
             );
             $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
+
             return $result;
         }
 
@@ -89,29 +92,29 @@ class AttendanceProcessingService
             $result['skip'] = true;
             return $result;
         }
+        Log::warning('after overnight check', [$result]);
 
         // ── Overnight shift: resolve out-date / out-time or delegate to next day ──
         [$outDate, $outTime] = $this->resolveOutDateTime($row, $date, $shift, $first, $last);
-
+        Log::warning('before overnight shift', [$result]);
         // ── Night shift cross-day checkout update ─────────────────────────────────
         if ($this->handleNightShiftCheckout($row, $date, $shift, $last, $now, $result)) {
             $result['skip'] = true;
             return $result;
         }
+        Log::warning('after overnight shift', [$result]);
 
         // ── Shift defaults ────────────────────────────────────────────────────────
         $shiftStart = $shift->clock_in      ?? '09:00:00';
         $shiftEnd   = $shift->clock_out     ?? '18:00:00';
         $graceParts = explode(':', $shift->shift_grace_time ?? '00:00:00');
         $grace = ($graceParts[0] * 60) + $graceParts[1];
-
         $workingHours = $this->calculateWorkingHours($first, $last, $shift);
         $inTime  = $first ? Carbon::parse($first->punch_datetime)->format('H:i:s') : null;
         $outTime = $last  ? Carbon::parse($last->punch_datetime)->format('H:i:s')  : null;
         $outDate = $last  ? Carbon::parse($last->punch_datetime)->format('Y-m-d')  : null;
 
         $rowKey = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, $inTime, $outTime, $now);
-
         // ── Attendance statuses ───────────────────────────────────────────────────
         $this->applyPresentOrLateStatus(
             $row, $date, $shift, $first, $shiftStart, $grace, $now, $statusesForLog
@@ -163,7 +166,7 @@ class AttendanceProcessingService
     // Private helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private function resolveFirstLastPunch(object $row, string $date): array
+    private function resolveFirstLastPunch(object $row, string $date, object $shift): array
     {
         if ($row->employeeAttendanceTemps->isEmpty()) {
             return [null, null];
@@ -173,8 +176,13 @@ class AttendanceProcessingService
 
         $forDate = $temps->filter(fn($t) => Carbon::parse($t->punch_datetime)->isSameDay($date));
 
+        Log::warning('test', ['forDate'=>$forDate]);
+
+
         $first = $forDate->sortBy('punch_datetime')->first();
         $last  = $forDate->sortByDesc('punch_datetime')->first();
+
+        Log::warning('test', [$first, $last, $first->punch_datetime, $last->punch_datetime]);
 
         if ($first && $first->punch_datetime instanceof Carbon) {
             $first->punch_datetime = $first->punch_datetime->toDateTimeString();
@@ -184,9 +192,11 @@ class AttendanceProcessingService
         }
 
         // Single punch: treat out as unknown
-        if ($first && $last && $first->punch_datetime === $last->punch_datetime) {
-            $last = null;
+        if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
+            $last = null; 
         }
+
+        Log::warning('test', [$first, $last]);
 
         return [$first, $last];
     }
@@ -206,7 +216,7 @@ class AttendanceProcessingService
         }
 
         if ($empHoliday) {
-            return [16]; // Weekend / employee-specific holiday absent
+            return [17]; // Weekend / employee-specific holiday absent
         }
 
         return [0]; // Absent
@@ -221,12 +231,15 @@ class AttendanceProcessingService
         object $row, string $date, ?object $shift,
         ?object $first, ?object $last, string $now, array &$statusesForLog
     ): bool {
+        Log::warning('test before:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) . '<=' . strtotime($first->punch_datetime)]);
         if (
             !$first || !$shift || $shift->is_overnight != 0 || !$first->punch_datetime ||
             strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)
         ) {
             return false;
         }
+
+        Log::warning('test after:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)]);
 
         $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
             ->where('date', date('Y-m-d', strtotime($date . ' -1 day')))
@@ -237,10 +250,9 @@ class AttendanceProcessingService
 
         if ($prevAttendance) {
             $prevAttendance->update([
-                'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
+                'out_time' => date('H:i:s', strtotime($first->punch_datetime?? $last->punch_datetime)),
                 'out_date' => $date,
             ]);
-
             EmployeeAttendanceStatusLog::insert([
                 'employee_user_id'       => $row->employee_user_id,
                 'employee_attendance_id' => $prevAttendance->id,
@@ -250,8 +262,21 @@ class AttendanceProcessingService
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now,
             ]);
+            $amount = ($row->gross_salary / date('t')) * 1;
+            PayrollAccruedAllowanceIncome::insert(
+                [
+                'employee_user_id'       => $row->employee_user_id,
+                'employee_attendance_id' => $prevAttendance->id,
+                'amount'                 => $amount,
+                'type'                   => 6, // Night Duty Allowance
+                'month'                  => date('m'),
+                'year'                   => date('Y'),
+                'date'                   => $date,
+                'created_user_id'        => $this->systemUserId,
+                'created_at'             => $now,
+                ]
+            );
         }
-
         return true;
     }
 
@@ -309,20 +334,6 @@ class AttendanceProcessingService
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now,
             ]);
-
-            // Night duty special allowance
-            $amount = ($row->gross_salary / date('t')) * 1;
-            $result['payrollAccruedItems'][] = [
-                'employee_user_id'       => $row->employee_user_id,
-                'employee_attendance_id' => $prevAttendance->id,
-                'amount'                 => $amount,
-                'type'                   => 6, // Night Duty Allowance
-                'month'                  => date('m'),
-                'year'                   => date('Y'),
-                'date'                   => $date,
-                'created_user_id'        => $this->systemUserId,
-                'created_at'             => $now,
-            ];
         }
 
         return true;
@@ -448,6 +459,8 @@ class AttendanceProcessingService
 
         $dutyOnDate = $holidayDutyRequisitions->where('duty_date', $date);
 
+        Log::warning('Holiday Duty:', ['dutyOnDate'=>$dutyOnDate]);
+
         if ($dutyOnDate->isEmpty()) {
             $statusesForLog[] = 19; // Unauthorized Holiday Duty
             return;
@@ -463,21 +476,33 @@ class AttendanceProcessingService
             return;
         }
 
-        // Grant compensatory leave
-        EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
-            ->where('leave_head_id', 5)
-            ->where('fiscal_year', date('Y'))
-            ->increment('achived_this_year', 1);
-
-        EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
-            ->where('leave_head_id', 5)
-            ->where('fiscal_year', date('Y'))
-            ->increment('current_balance', 1);
-
         $balanceStat = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
             ->where('leave_head_id', 5)
             ->where('fiscal_year', date('Y'))
             ->first();
+
+        // Grant compensatory leave
+        $employeeLeaveBalance = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
+            ->where('leave_head_id', 5)
+            ->where('fiscal_year', date('Y'))->first();
+
+        if(!$employeeLeaveBalance){
+            EmployeeLeaveBalance::create([
+                'employee_user_id'=>$row->employee_user_id,
+                'leave_head_id'=>5,
+                'leave_policy_id'=>4,
+                'fiscal_year'=> date('Y'),
+                'created_user_id'=> $this->systemUserId,
+                'achived_this_year'=>1,
+                'current_balance'=>1
+            ]);
+        }else{
+            $employeeLeaveBalance->achived_this_year = 1;
+            $employeeLeaveBalance->current_balance = 1;
+            $employeeLeaveBalance->save();
+        }
+
+        $balanceStat = $employeeLeaveBalance;
 
         $validityDays   = optional(
             $row->hasLeavePolicyDetail->where('leave_head_id', 5)->first()

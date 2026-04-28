@@ -81,7 +81,101 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                 fn($date) => $date->format('Y-m-d')
             )->toArray();
 
-        $officialInfos = EmployeeOfficialInformation::with(
+        $officialInfos = EmployeeOfficialInformation::with([
+            'employeeAttendanceTemps' => fn($q) => $q
+                ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $endBoundary])
+                ->orderBy('punch_datetime'),
+            'employeeOtPolicy'        => fn($q) => $q
+                ->where('effective_date', '<=', $startBoundary)->where('status', 1),
+            'hasLeavePolicyDetail',
+            'hasLateDeductionPolicy'  => fn($q) => $q
+                ->where('effective_date', '<=', $startBoundary)->where('status', 1),
+            'lateDays'                => fn($q) => $q
+                ->whereBetween('attendance_date', [
+                    date('Y-m-01', strtotime($startBoundary)),
+                    date('Y-m-t',  strtotime($endBoundary)),
+                ])
+                ->where('attendance_status', 2),
+        ])
+        ->whereIn('emp_code', function ($q) {
+            $q->select('emp_code')
+            ->from('employee_attendance_temp')
+            ->distinct();
+        })->where('employee_user_id','=', 208)
+        ->get();
+
+        $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)
+            ->orderBy('effective_date', 'desc')
+            ->get()
+            ->keyBy('id');
+
+        $LeaveApplicationDetails = LeaveApplicationDetail::whereBetween('leave_date', [$startDate, $endDate])
+            ->get()
+            ->groupBy('employee_user_id');
+
+        $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
+            ->whereNull('employee_user_id')
+            ->get()->keyBy('date');
+        /* if($publicHolidays->isNotEmpty()){
+            Log::warning('public holiday:', ['public holiday:' => $publicHolidays]);
+            return;
+        } */
+
+        $employeeHolidaysByEmp = Holiday::whereBetween('date', [$startDate, $endDate])
+            ->whereNotNull('employee_user_id')
+            ->get()
+            ->groupBy('employee_user_id')
+            ->map(fn($c) => $c->keyBy('date'));
+        /* if($employeeHolidaysByEmp->isNotEmpty()){
+            Log::warning('employee holiday:', ['employee holiday:' => $employeeHolidaysByEmp]);
+            return;
+        } */
+        
+
+        $holidayDutyRequisitions = HolidayDutyRequisition::whereBetween('duty_date', [$startDate, $endDate])
+            ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
+            ->where('holiday_duty_requisitions.status', 'Approved')
+            ->whereNotNull('holiday_duty_requisitions.approved_at')
+            ->get();
+        /* if($holidayDutyRequisitions->isNotEmpty()){
+            Log::warning('holiday Requisition:', ['holiday Requisition:' => $holidayDutyRequisitions]);
+            return;
+        } */
+
+        $otRequisitions = EmployeeOtRequisition::whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$startDate])
+            ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$endDate])
+            ->whereNotNull('approval_date')
+            ->get()
+            ->keyBy('employee_user_id');
+        /* if($otRequisitions->isNotEmpty()){
+            Log::warning('OT Requisition:', ['OT Requisition:' => $otRequisitions]);
+            return;
+        } */
+
+        // ── Delete existing records for the date range ────────────────────────
+        $attRecordIds = EmployeeAttendance::whereIn('date', $dates)->pluck('id');
+
+        if ($attRecordIds->isNotEmpty()) {
+            $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
+                ->selectRaw('SUM(leave_count) as leave_count, employee_leave_balance_id')
+                ->groupBy('employee_leave_balance_id')
+                ->get();
+            /* if($totalLeaveAchieved->isNotEmpty()){
+                Log::warning('totalLeaveAchieved:', ['totalLeaveAchieved:' => $totalLeaveAchieved]);
+                return;
+            } */
+            foreach ($totalLeaveAchieved as $item) {
+                EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
+                    ->decrement('current_balance', $item->leave_count);
+            }
+
+            EmployeeAttendanceStatusLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
+            PayrollAccruedAllowanceIncome::whereIn('employee_attendance_id', $attRecordIds)->delete();
+            EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
+            EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
+        }
+
+        /* $officialInfos = EmployeeOfficialInformation::with(
             [
                 'employeeAttendanceTemps' => function ($query) use ($startBoundary, $endBoundary) {
                     $query
@@ -160,15 +254,14 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
         $rosterCatalog = \App\Models\Roster::orderBy('effective_from', 'desc')->get()->groupBy('shift_id'); */
 
 
-        $employeeOtPolicies = EmployeeOtPolicy::where('effective_date', '<=', $startDate)->where('status', 1)
+        /* $employeeOtPolicies = EmployeeOtPolicy::where('effective_date', '<=', $startDate)->where('status', 1)
             ->get()
             ->keyBy('employee_user_id');
 
         $otRequisitions = EmployeeOtRequisition::where('ot_date_from', '>=', $startDate)
             ->where('ot_date_to', '<=', $endDate)
             ->get()
-            ->keyBy('employee_user_id');
-
+            ->keyBy('employee_user_id'); */
         $systemUserId = (int) env('SYSTEM_USER_ID', 1);
         $prepared = [];
         $skipped = [];
@@ -330,7 +423,7 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                         ->whereNull('out_time')
                         ->whereNull('out_date')
                         ->update([
-                            'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
+                            'out_time' => date('H:i:s', strtotime($last->punch_datetime ?? $first->punch_datetime)),
                             'out_date' => $date,
                         ]);
                     //.... update(insert) Employee Attendance Status Log data
@@ -343,6 +436,7 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                         'created_user_id'         => $systemUserId,
                         'created_at'              => $now,
                     ]);
+                    
                     continue; // skip this date
                 }
                 //................................ Speccial over night checkout for normal shift duty [end] .................................................
@@ -427,16 +521,17 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                 $shiftStart = $shift->clock_in ?? '09:00:00';
                 $shiftEnd   = $shift->clock_out   ?? '18:00:00';
                 $grace      = $shift->shift_grace_time ?? 0;
-
-                if ($first && $last && $shift && ($first->punch_datetime->diffInHours($last->punch_datetime)) >= 4) {
+                $workingHours = 0;
+                if ($first && $last && $shift) {
                     $time = explode(':', $shift->lunch_meal_time);
                     $lunchMealHour = $time[0] ?? 0;
                     $lunchMealMinute = $time[1] ?? 0;
-                    $lunchMealHour = $lunchMealHour + ($lunchMealMinute / 60);
-
-                    $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime) - $lunchMealHour;
-                } else {
-                    $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime);
+                    $lunchMealHour = intval($lunchMealHour) +   ((int)$lunchMealMinute / 60);
+                    if($first->punch_datetime->diffInHours($last->punch_datetime) >= 4){
+                        $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime) - $lunchMealHour;
+                    }else{
+                        $workingHours = $first->punch_datetime->diffInHours($last->punch_datetime);
+                    }
                 }
 
                 $inTime  = $first && $first->punch_datetime ? $first->punch_datetime->format('H:i:s') : null;
@@ -463,7 +558,7 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                     if ($lateDeductionPolicy) {
 
                         // for deduction basis -> "Day"
-                        if ($lateDeductionPolicy->deduction_basis == "Day" && (($row->lateDays->count()) % ($lateDeductionPolicy->max_late_days + 1) == 0)) {
+                        if ($lateDeductionPolicy->deduction_basis == "Day" && (($row->lateDays->count()+1) % ($lateDeductionPolicy->max_late_days + 1) == 0)) {
                             //... first check is there any any entry exists for this month for this employee or not
                             $lateAttendanceRecord = LateAttendanceRecord::with('lateAttendanceRecordDetails')
                                 ->where('employee_user_id', $row->employee_user_id)
@@ -486,13 +581,16 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                             $lateCount = $row->lateDays->count();
                             $cycle = $lateDeductionPolicy->max_late_days + 1;
                             $rowsToInsert = $lateCount / $cycle;
+                            Log::warning('test', ['interable'=>$rowsToInsert, 'cycle'=>$cycle, 'lateCount'=> $lateCount ]);
 
                             for ($i = 0; $i < $rowsToInsert; $i++) {
-
+                                
+                                Log::warning('late attendance record', ['employee_user_id'=>$row->employee_user_id, 'cycle'=>$cycle, 'lateCount'=> $lateCount ]);
                                 $lateRecord = LateAttendanceRecord::create([
                                     'employee_user_id' => $row->employee_user_id,
                                     'month'            => date('m', strtotime($date)),
                                     'year'             => date('Y', strtotime($date)),
+                                    'shift_id'          => $shift_id,
                                     'created_user_id'  => $systemUserId,
                                     'created_at'       => $now,
                                 ]);
@@ -541,8 +639,7 @@ class ProcessTempDataJobFinal extends Job implements ShouldQueue
                 }
 
                 if (count($holidayDutyRequisition_all) >0) {
-                    $holidayDutyRequisition = $holidayDutyRequisition_all->where('requested_by_user_id ', $row->employee_user_id)
-                        ->exists();
+                    $holidayDutyRequisition = $holidayDutyRequisition_all->where('requested_by_user_id', $row->employee_user_id)->isNotEmpty();
 
                     if ($holidayDutyRequisition) {
                         // todo :: some times for fastival holiday, employee gets compensetory leave and cash incentive or 2 compensetory leave
