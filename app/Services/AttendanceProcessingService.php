@@ -98,7 +98,7 @@ class AttendanceProcessingService
         [$outDate, $outTime] = $this->resolveOutDateTime($row, $date, $shift, $first, $last);
         Log::warning('before overnight shift', [$result]);
         // ── Night shift cross-day checkout update ─────────────────────────────────
-        if ($this->handleNightShiftCheckout($row, $date, $shift, $last, $now, $result)) {
+        if ($this->handleNightShiftCheckout($row, $date, $shift, $first, $last, $now, $result)) {
             $result['skip'] = true;
             return $result;
         }
@@ -301,9 +301,11 @@ class AttendanceProcessingService
      * update previous day's record, generate allowance, and signal skip.
      */
     private function handleNightShiftCheckout(
-        object $row, string $date, ?object $shift,
+        object $row, string $date, ?object $shift, ?object $first,
         ?object $last, string $now, array &$result
     ): bool {
+        Log::warning('Before overnight duty check:', [$row, $date, $shift, $last]);
+        $last = $last ?? $first;
         if (
             !$shift || $shift->is_overnight != 1 || !$last ||
             !(
@@ -313,11 +315,14 @@ class AttendanceProcessingService
         ) {
             return false;
         }
+        Log::warning('after overnight duty check:', [$row, $date, $shift, $last]);
 
         $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
             ->where('date', date('Y-m-d', strtotime($date . ' -1 day')))
             ->whereNotNull('in_time')
             ->first();
+
+        Log::warning('Previous att:', [$prevAttendance]);
 
         if ($prevAttendance) {
             $prevAttendance->update([
@@ -461,17 +466,12 @@ class AttendanceProcessingService
 
         Log::warning('Holiday Duty:', ['dutyOnDate'=>$dutyOnDate]);
 
-        if ($dutyOnDate->isEmpty()) {
-            $statusesForLog[] = 19; // Unauthorized Holiday Duty
-            return;
-        }
-
-        $hasApprovedRequisition = $dutyOnDate
+        $hasApprovedRequisition = optional($dutyOnDate)
             ->where('employee_user_id', $row->employee_user_id)
             ->where('duty_date', $date)
-            ->isNotEmpty();
+            ->isNotEmpty() ?? false;
 
-        if (!$hasApprovedRequisition) {
+        if ($dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
             $statusesForLog[] = 19; // Unauthorized
             return;
         }

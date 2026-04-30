@@ -54,15 +54,6 @@ class AttendanceController extends Controller
             'start_date' => $startTime,
             'end_date' => $endTime,
         ];
-
-        $queueName = 'processTempData_queue';
-        // Dispatch a proper queued job that a RabbitMQ worker can consume automatically
-        dispatch((new ProcessTempDataJob($payload))
-            ->onQueue($queueName)
-            ->onConnection('rabbitmq'));
-
-        die;
-
         // Increase timeout to 120 seconds and add retry logic to handle transient network issues
         $attendance_data = Http::timeout(120)
             ->retry(3, 5000) // 3 retries, 5 second delay between retries
@@ -72,7 +63,7 @@ class AttendanceController extends Controller
             ])
             ->get($attendanceApiUrl, [
                 'start_time' => $startTime,
-                'end_time'   => $endTime,
+                'end_time'   => date('Y-m-d', strtotime($startTime . ' +1 day')),
                 'page'       => 1,
                 'page_size'  => 50000,
                 'departments' => 1,
@@ -122,7 +113,7 @@ class AttendanceController extends Controller
         if (is_array($responseJson)) {
             $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
         }
-
+        //dd($records);
         $grouped = [];
         foreach ($records as $record) {
             // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)

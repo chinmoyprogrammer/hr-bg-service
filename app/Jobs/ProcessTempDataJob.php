@@ -85,8 +85,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->from('employee_attendance_temp')
             ->distinct();
         })
-        ->where('employee_user_id','=', 208)
         ->get();
+        //208, 395, ->where('employee_user_id','=', 208)
 
         $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)
             ->orderBy('effective_date', 'desc')
@@ -272,7 +272,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
         // ── Insert payroll accrued allowances ─────────────────────────────────
         if (!empty($payrollAccruedItems)) {
+            //Log::warning('payroll:', ['payrollAccruedItems'=>$payrollAccruedItems, 'payrollKeyIndex'=>$payrollKeyIndex, 'idMapByEmpDate'=>$idMapByEmpDate]);
             foreach ($payrollKeyIndex as $k => $indices) {
+                //Log::warning('payroll:', ['k'=>$k,'indics'=>$indices]);
                 if (isset($idMapByEmpDate[$k])) {
                     foreach ($indices as $idx) {
                         $payrollAccruedItems[$idx]['employee_attendance_id'] = $idMapByEmpDate[$k];
@@ -280,7 +282,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 }
             }
             foreach (array_chunk($payrollAccruedItems, 500) as $chunk) {
-                PayrollAccruedAllowanceIncome::insert($chunk);
+                $status = PayrollAccruedAllowanceIncome::insert($chunk);
+                //Log::warning('Payroll Allowance Income:', [$status, $chunk]);
             }
         }
 
