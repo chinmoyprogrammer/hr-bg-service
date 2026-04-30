@@ -115,6 +115,10 @@ class EmployeeOfficialInformation extends Model
     //         ;
     // }
 
+    public function lateDays(){
+        return $this->hasMany(EmployeeAttendanceStatusLog::class, 'employee_user_id', 'employee_user_id');
+    }
+
 
     public function attendanceLogs()
     {
