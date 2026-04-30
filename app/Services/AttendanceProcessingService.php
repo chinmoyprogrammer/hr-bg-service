@@ -18,10 +18,14 @@ use function calculateOtHours;
 class AttendanceProcessingService
 {
     private int $systemUserId;
+    private bool $isManual;
+    private string $source;
 
     public function __construct()
     {
         $this->systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $this->isManual = 0;
+        $this->source = 'biometric';
     }
 
     /**
@@ -42,8 +46,29 @@ class AttendanceProcessingService
         ?object    $empHoliday,
         ?Collection $holidayDutyRequisitions,
         ?object    $otRequisition,
-        ?Collection $leaveApplicationDetails // keyed collection of LeaveApplicationDetail for employee
+        ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
+        ?array      $manualPunch = null
     ): array {
+        // ── Manual punch override ─────────────────────────────────────────────────
+        if ($manualPunch) {
+            $fakeTemps = collect();
+            if (!empty($manualPunch['in_time'])) {
+                $fakeTemps->push((object)[
+                    'punch_datetime' => $date . ' ' . $manualPunch['in_time'],
+                ]);
+            }
+            if (!empty($manualPunch['out_time'])) {
+                $fakeTemps->push((object)[
+                    'punch_datetime' => $date . ' ' . $manualPunch['out_time'],
+                ]);
+            }
+            $row->employeeAttendanceTemps = $fakeTemps;
+            $this->isManual = 1;
+            $this->source = 'manual';
+        }
+
+        Log::warning('tempAtt:', ['tempAtt'=>$row->employeeAttendanceTemps]);
+
         $now = date('Y-m-d H:i:s');
 
         $result = [
@@ -68,6 +93,8 @@ class AttendanceProcessingService
 
         // ── Resolve first / last punches for this date ────────────────────────────
         [$first, $last] = $this->resolveFirstLastPunch($row, $date, $shift);
+
+        Log::warning('Debug:', ['first'=>$first, 'last'=>$last]);
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if ($row->employeeAttendanceTemps->isEmpty()) {
@@ -190,11 +217,14 @@ class AttendanceProcessingService
         if ($last && $last->punch_datetime instanceof Carbon) {
             $last->punch_datetime = $last->punch_datetime->toDateTimeString();
         }
+        if ($first && $last && (string) $first->punch_datetime === (string) $last->punch_datetime) {
+            $last = null;
+        }
 
         // Single punch: treat out as unknown
-        if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
+        /* if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
             $last = null; 
-        }
+        } */
 
         Log::warning('test', [$first, $last]);
 
@@ -338,6 +368,8 @@ class AttendanceProcessingService
                 'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now,
+                'is_manual'              => $this->isManual,
+                'source'                 => $this->source,
             ]);
         }
 
@@ -456,7 +488,9 @@ class AttendanceProcessingService
         string $now, string $rowKey
     ): void {
         $anyHoliday = $publicHoliday || $empHoliday;
-
+        if(!$anyHoliday){
+            return;
+        }
         if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0) {
             $statusesForLog[] = $empHoliday ? 20 : 21; // Weekend Duty / Public Holiday Duty
             $statusesForLog[] = 14;                     // Holiday Duty
@@ -471,7 +505,7 @@ class AttendanceProcessingService
             ->where('duty_date', $date)
             ->isNotEmpty() ?? false;
 
-        if ($dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
+        if ($anyHoliday && $dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
             $statusesForLog[] = 19; // Unauthorized
             return;
         }
@@ -668,9 +702,9 @@ class AttendanceProcessingService
             'transfered_to_ot'                           => $transferedToOTStatus ? 1 : 0,
             'is_holiday'                                 => ($publicHoliday || $empHoliday) ? 1 : 0,
             'is_join'                                    => $isJoin,
-            'is_manual'                                  => 0,
+            'is_manual'                                  => $this->isManual,
             'absent_bridge'                              => 0,
-            'source'                                     => 'biometric',
+            'source'                                     => $this->source,
             'is_corrected'                               => 0,
             'working_hours'                              => $workingHours,
             'employee_applied_attendance_correction_id'  => null,

@@ -87,7 +87,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             $manualPunchMap[$r['employee_user_id'] . '|' . $r['date']] = $r;
         }
 
-        //Log::warning('manual punch map:', ['manualPunchMap'=>$manualPunchMap]);
+        Log::warning('manual punch map:', ['manualPunchMap'=>$manualPunchMap]);
 
         // ── Pre-load shared look-up data (same pattern as ProcessTempDataJob) ─
         $officialInfos = EmployeeOfficialInformation::with([
@@ -96,12 +96,12 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             'hasLeavePolicyDetail',
             'hasLateDeductionPolicy' => fn($q) => $q
                 ->where('effective_date', '<=', $startBoundary)->where('status', 1),
-            'lateDays'               => fn($q) => $q
+            'lateDays'=> fn($q) => $q
                 ->whereBetween('attendance_date', [
                     date('Y-m-01', strtotime($startBoundary)),
                     date('Y-m-t',  strtotime($endBoundary)),
                 ])
-                ->where('attendance_status', 2),
+                ->where('attendance_status', 2)
         ])
         ->whereIn('employee_user_id', $empUserIds)
         ->get();
@@ -189,6 +189,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
 
+                //Log::warning('manual:', ['manualPunch'=>$manualPunch]);
+
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
                     $row,
                     $date,
@@ -198,12 +200,14 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $holidayDutyRequisitions,
                     $otRequisition,
                     $empLeaveDetails,
-                    $manualPunch   // ← extra arg: service uses this instead of temp table punches
+                    $manualPunch
                 );
 
                 if ($result['skip']) {
                     continue;
                 }
+
+                Log::warning('manual result:', ['result'=>$result]);
 
                 if ($result['attendance']) {
                     $rowKey         = $result['rowKey'];
