@@ -48,6 +48,12 @@ class AttendanceController extends Controller
         $startTime = $request->input('start_time');
         $endTime   = $request->input('end_time');
 
+
+        $payload = [
+            'message' => "HHH",
+            'start_date' => $startTime,
+            'end_date' => $endTime,
+        ];
         // Increase timeout to 120 seconds and add retry logic to handle transient network issues
         $attendance_data = Http::timeout(120)
             ->retry(3, 5000) // 3 retries, 5 second delay between retries
@@ -57,7 +63,7 @@ class AttendanceController extends Controller
             ])
             ->get($attendanceApiUrl, [
                 'start_time' => $startTime,
-                'end_time'   => $endTime,
+                'end_time'   => date('Y-m-d', strtotime($startTime . ' +1 day')),
                 'page'       => 1,
                 'page_size'  => 50000,
                 'departments' => 1,
@@ -107,7 +113,7 @@ class AttendanceController extends Controller
         if (is_array($responseJson)) {
             $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
         }
-
+        //dd($records);
         $grouped = [];
         foreach ($records as $record) {
             // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
@@ -134,15 +140,13 @@ class AttendanceController extends Controller
         if (!empty($insert_data)) {
             //dd('GGGGGGGG');
             //...Delete all previous data
-            //EmployeeAttendanceTemp::truncate();
+            EmployeeAttendanceTemp::truncate();
             
             //...Insert into temp table
-            //EmployeeAttendanceTemp::insert($insert_data);
+            EmployeeAttendanceTemp::insert($insert_data);
 
             //.... Punch history insert
             // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
-            /* 
-            ------------- Punch history insert ------------- 
             $columns = ['emp_code', 'punch_datetime'];
             $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
             $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
@@ -156,7 +160,7 @@ class AttendanceController extends Controller
                 $bindings[] = $row['punch_datetime'];
             }
 
-            DB::insert($sql, $bindings); */
+            DB::insert($sql, $bindings);
             // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
             //     'inserted' => count($insert_data),
             // ]);

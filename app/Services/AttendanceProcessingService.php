@@ -2,644 +2,742 @@
 
 namespace App\Services;
 
-use Carbon\Carbon;
-use App\Models\EmployeeOfficialInformation;
-use App\Models\Shift;
-use App\Models\Roster;
-use App\Models\RosterAssignment;
-use App\Models\Holiday;
-use App\Models\EmployeeOtRequisition;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceStatusLog;
+use App\Models\EmployeeLeaveBalance;
 use App\Models\LateAttendanceRecord;
 use App\Models\LateAttendanceRecordDetail;
-use App\Models\HolidayDutyRequisition;
-use App\Models\EmployeeLeaveAchieveLog;
-use App\Models\EmployeeLeaveBalance;
-use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\LeaveApplicationDetail;
-use App\DTOs\AttendanceDTO;
+use App\Models\PayrollAccruedAllowanceIncome;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+
+use function calculateOtHours;
 
 class AttendanceProcessingService
 {
-    // ─────────────────────────────────────────────
-    // Resolved data (populated during process())
-    // ─────────────────────────────────────────────
-    private EmployeeOfficialInformation $employee;
-    private Shift $shift;
-    private string $now;
     private int $systemUserId;
+    private bool $isManual;
+    private string $source;
 
-    // Shift time fields (resolved once, reused)
-    private string $shiftStart;
-    private string $shiftEnd;
-    private int    $grace;          // in minutes
-    private string $startCheckIn;
-    private string $endCheckIn;
-    private string $firstHalfDay;
-    private string $clockOutStart;
-
-    // ─────────────────────────────────────────────
-    // Entry point
-    // ─────────────────────────────────────────────
-
-    public function process(AttendanceDTO $dto): array
+    public function __construct()
     {
-        Log::warning('test from service:', [
-            'payload' => $dto,
-        ]);
-        $this->systemUserId = 1;
-        $this->now          = Carbon::now()->toDateTimeString();
-
-        $this->resolveEmployee($dto);
-        $this->resolveShift($dto);
-        $this->resolveShiftTimes();
-
-        $rosterId        = $this->resolveRoster($dto);
-        $holidayData     = $this->resolveHoliday($dto);
-        $otRequisition   = $this->resolveOtRequisition($dto);
-
-        $statuses        = $this->determineStatuses($dto, $holidayData);
-        $lateResult      = $this->handleLateDeduction($dto, $statuses);
-        $holidayComp     = $this->handleHolidayCompensation($dto, $holidayData);
-        $otResult        = $this->calculateOvertime($dto, $otRequisition);
-
-        $attendance      = $this->persistAttendance($dto, $statuses, $rosterId, $holidayData, $otResult);
-        $this->persistStatusLogs($attendance->id, $dto, $statuses);
-        $this->linkLeaveAchieveLog($attendance->id, $holidayComp['compensation_leave_earned']);
-
-        return [
-            'attendance_id'             => $attendance->id,
-            'statuses'                  => $statuses,
-            'is_late'                   => in_array(2, $statuses),
-            'late_deduction_triggered'  => $lateResult['triggered'],
-            'holiday_duty'              => $holidayData['is_holiday'] && ($dto->inTime !== null && $dto->outTime !== null),
-            'compensation_leave_earned' => $holidayComp['compensation_leave_earned'],
-            'cash_award'                => $holidayComp['cash_award'],
-            'overtime_hours'            => $otResult['overtime_hours'],
-            'transfered_to_ot'          => $otResult['transfered_to_ot'],
-        ];
+        $this->systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $this->isManual = 0;
+        $this->source = 'biometric';
     }
 
-    // ─────────────────────────────────────────────
-    // Step 1 — Employee
-    // ─────────────────────────────────────────────
-
-    private function resolveEmployee(AttendanceDTO $dto): void
-    {
-        $date           = $dto->date;
-        $startBoundary  = date('Y-m-01', strtotime($date));
-        $endBoundary    = date('Y-m-t',  strtotime($date));
-
-        $employee = EmployeeOfficialInformation::with([
-            'hasLateDeductionPolicy' => fn($q) => $q
-                ->where('effective_date', '<=', $date)
-                ->where('status', 1),
-
-            'lateDays' => fn($q) => $q
-                ->whereBetween('attendance_date', [
-                    date('Y-m-01', strtotime($startBoundary)),
-                    date('Y-m-t',  strtotime($endBoundary)),
-                ])
-                ->where('attendance_status', 2),
-
-            'employeeOtPolicy' => fn($q) => $q
-                ->where('effective_date', '<=', $date)
-                ->where('status', 1),
-
-            'hasLeavePolicyDetail',
-        ])
-        ->where('employee_user_id', $dto->employeeId)
-        ->first();
-
-        if (!$employee) {
-            throw new \Exception("Employee not found: {$dto->employeeId}");
-        }
-
-        $this->employee = $employee;
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 2 — Shift
-    // ─────────────────────────────────────────────
-
-    private function resolveShift(AttendanceDTO $dto): void
-    {
-        $shift = null;
-
-        if ($this->employee->shift_id) {
-            $shift = Shift::where('id', $this->employee->shift_id)
-                ->where('effective_date', '<=', $dto->date)
-                ->orderBy('effective_date', 'desc')
-                ->first();
-        }
-
-        if (!$shift) {
-            throw new \Exception("No valid shift for employee {$dto->employeeId} on {$dto->date}");
-        }
-
-        $this->shift = $shift;
-    }
-
-    // ─────────────────────────────────────────────
-    // Shift time helpers (computed once)
-    // ─────────────────────────────────────────────
-
-    private function resolveShiftTimes(): void
-    {
-        $shift = $this->shift;
-
-        $this->shiftStart    = $shift->clock_in             ?? '09:00:00';
-        $this->shiftEnd      = $shift->clock_out            ?? '18:00:00';
-        $this->startCheckIn  = $shift->start_check_in_time  ?? $this->shiftStart;
-        $this->endCheckIn    = $shift->end_check_in_time    ?? $this->shiftStart;
-        $this->firstHalfDay  = $shift->first_half_day       ?? $this->shiftStart;
-        $this->clockOutStart = $shift->clock_out_start_time ?? $this->shiftEnd;
-
-        $graceParts  = explode(':', $shift->shift_grace_time ?? '00:00:00');
-        $this->grace = ((int)$graceParts[0] * 60) + (int)$graceParts[1];
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 3 — Roster
-    // ─────────────────────────────────────────────
-
-    private function resolveRoster(AttendanceDTO $dto): ?int
-    {
-        $date       = $dto->date;
-        $employeeId = $dto->employeeId;
-
-        $assignment = RosterAssignment::where('employee_user_id', $employeeId)
-            ->where('from_date', '<=', $date)
-            ->where(fn($q) => $q->whereNull('to_date')->orWhere('to_date', '>=', $date))
-            ->whereNull('deleted_by')
-            ->first();
-
-        if ($assignment) {
-            return $assignment->roster_id;
-        }
-
-        // Fallback: effective roster from shift's roster catalog
-        $rosterCatalog = Roster::where('shift_id', $this->employee->shift_id)
-            ->orderBy('effective_from', 'desc')
-            ->get();
-
-        $effectiveRoster = $rosterCatalog->first(
-            fn($roster) => $roster->effective_from <= $date
-                && (is_null($roster->effective_to) || $roster->effective_to >= $date)
-        );
-
-        return $effectiveRoster?->id;
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 4 — Holiday
-    // ─────────────────────────────────────────────
-
-    private function resolveHoliday(AttendanceDTO $dto): array
-    {
-        $date       = $dto->date;
-        $employeeId = $dto->employeeId;
-
-        $publicHoliday   = Holiday::where('date', $date)->whereNull('employee_user_id')->first();
-        $employeeHoliday = Holiday::where('date', $date)->where('employee_user_id', $employeeId)->first();
-
-        return [
-            'public_holiday'   => $publicHoliday,
-            'employee_holiday' => $employeeHoliday,
-            'is_holiday'       => (bool)($publicHoliday || $employeeHoliday),
-            'holiday_type'     => $publicHoliday ? 'public' : ($employeeHoliday ? 'employee' : null),
-        ];
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 5 — OT Requisition
-    // ─────────────────────────────────────────────
-
-    private function resolveOtRequisition(AttendanceDTO $dto): ?EmployeeOtRequisition
-    {
-        return EmployeeOtRequisition::where('employee_user_id', $dto->employeeId)
-            ->where('ot_date_from', '<=', $dto->date)
-            ->where('ot_date_to',   '>=', $dto->date)
-            ->first();
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 6 — Statuses
-    // ─────────────────────────────────────────────
-
-    private function determineStatuses(AttendanceDTO $dto, array $holidayData): array
-    {
-        $date       = $dto->date;
-        $employeeId = $dto->employeeId;
-        $inTime     = $dto->inTime;
-        $outTime    = $dto->outTime;
-
-        $hasIn         = $inTime  !== null;
-        $hasOut        = $outTime !== null;
-        $hasAttendance = $hasIn && $hasOut;
-
-        $ts = fn($time) => $time ? strtotime("$date $time") : null;
-
-        $inTs  = $ts($inTime);
-        $outTs = $ts($outTime);
-
-        $statuses = [];
-
-        if ($hasAttendance) {
-            $statuses = array_merge(
-                $statuses,
-                $this->resolvePresenceStatuses($date, $inTs, $outTs)
-            );
-        } else {
-            $statuses = array_merge(
-                $statuses,
-                $this->resolveAbsenceStatuses($employeeId, $date, $holidayData)
-            );
-        }
-
-        // Holiday duty statuses (only if attendance exists)
-        if ($holidayData['is_holiday'] && $hasAttendance) {
-            $statuses[] = 14; // Holiday Duty
-
-            if ($holidayData['public_holiday'])   $statuses[] = 21; // Public Holiday Duty
-            if ($holidayData['employee_holiday']) $statuses[] = 20; // Weekend Duty
-        }
-
-        return $statuses;
-    }
-
-    private function resolvePresenceStatuses(string $date, int $inTs, int $outTs): array
-    {
-        $statuses = [];
-
-        $graceEnd        = strtotime("$date {$this->shiftStart} +{$this->grace} minutes");
-        $startCheckInTs  = strtotime("$date {$this->startCheckIn}");
-        $endCheckInTs    = strtotime("$date {$this->endCheckIn}");
-        $shiftEndTs      = strtotime("$date {$this->shiftEnd}");
-        $firstHalfDayTs  = strtotime("$date {$this->firstHalfDay}");
-        $clockOutStartTs = strtotime("$date {$this->clockOutStart}");
-
-        // Present or Late
-        if ($inTs >= $startCheckInTs && $inTs <= $graceEnd) {
-            $statuses[] = 1; // Present
-        } else {
-            $statuses[] = 2; // Present Late (PL)
-        }
-
-        // Early Out
-        if ($outTs >= $clockOutStartTs && $outTs < $shiftEndTs) {
-            $statuses[] = 7; // Early Out
-        }
-
-        // Half-day 1st (late in, but full out)
-        if ($inTs > $endCheckInTs && $inTs < $firstHalfDayTs && $outTs >= $shiftEndTs) {
-            $statuses[] = 3; // Half-day 1st UA
-        }
-
-        // Half-day 2nd (on time in, early out after first half)
-        if ($inTs < $firstHalfDayTs && $outTs < $clockOutStartTs && $outTs > $firstHalfDayTs) {
-            $statuses[] = 5; // Half-day 2nd UA
-        }
-
-        return $statuses;
-    }
-
-    private function resolveAbsenceStatuses(int $employeeId, string $date, array $holidayData): array
-    {
-        $statuses = [];
-
-        $onLeave = LeaveApplicationDetail::where('employee_user_id', $employeeId)
-            ->where('leave_date', $date)
-            ->where('first_second_half', 3) // full day
-            ->exists();
-
-        if ($onLeave) {
-            $statuses[] = 8; // On Leave
-        } elseif ($holidayData['is_holiday']) {
-            if ($holidayData['public_holiday'])   $statuses[] = 9;  // Public Holiday Absent
-            if ($holidayData['employee_holiday']) $statuses[] = 16; // Weekend Absent
-        } else {
-            $statuses[] = 0; // Absent
-        }
-
-        return $statuses;
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 7 — Late Deduction
-    // ─────────────────────────────────────────────
-
-    private function handleLateDeduction(AttendanceDTO $dto, array $statuses): array
-    {
-        $result = ['triggered' => false];
-
-        $latePolicy = $this->employee->hasLateDeductionPolicy;
-
-        if (!in_array(2, $statuses) || !$latePolicy || $latePolicy->deduction_basis !== 'Day') {
-            return $result;
-        }
-
-        $date           = $dto->date;
-        $employeeId     = $dto->employeeId;
-        $currentLateCount = $this->employee->lateDays->count();
-        $maxLateDays    = $latePolicy->max_late_days ?? 0;
-        $cycle          = $maxLateDays + 1;
-
-        if (($currentLateCount + 1) % $cycle !== 0) {
-            return $result;
-        }
-
-        // Delete existing late records for this month
-        $recordIds = LateAttendanceRecord::where('employee_user_id', $employeeId)
-            ->where('month', Carbon::parse($date)->month)
-            ->where('year',  Carbon::parse($date)->year)
-            ->pluck('id');
-
-        if ($recordIds->isNotEmpty()) {
-            LateAttendanceRecordDetail::whereIn('late_attendance_record_id', $recordIds)->delete();
-            LateAttendanceRecord::whereIn('id', $recordIds)->delete();
-        }
-
-        // All late days this month (existing + today)
-        $existingLateDays = EmployeeAttendanceStatusLog::where('employee_user_id', $employeeId)
-            ->whereMonth('attendance_date', Carbon::parse($date)->month)
-            ->whereYear('attendance_date',  Carbon::parse($date)->year)
-            ->where('attendance_status', 2)
-            ->pluck('attendance_date')
-            ->unique()
-            ->values()
-            ->toArray();
-
-        $allLateDays = array_unique(array_merge($existingLateDays, [$date]));
-        $totalLateDays = count($allLateDays);
-        $numCycles = (int)ceil($totalLateDays / $cycle);
-
-        for ($i = 0; $i < $numCycles; $i++) {
-            $header = LateAttendanceRecord::create([
-                'employee_user_id' => $employeeId,
-                'month'            => Carbon::parse($date)->month,
-                'year'             => Carbon::parse($date)->year,
-                'created_user_id'  => $this->systemUserId,
-                'created_at'       => $this->now,
-            ]);
-
-            $start = $i * $cycle;
-            $end   = min(($i + 1) * $cycle, $totalLateDays);
-
-            for ($j = $start; $j < $end; $j++) {
-                LateAttendanceRecordDetail::create([
-                    'late_attendance_record_id' => $header->id,
-                    'date'                      => $allLateDays[$j],
-                    'late_hours'                => 0,
-                    'created_user_id'           => $this->systemUserId,
-                    'created_at'                => $this->now,
+    /**
+     * Process a single employee for a single date.
+     *
+     * Returns a result DTO-style array with keys:
+     *   - attendance: array|null          → row to bulk-insert into employee_attendances
+     *   - rowKey: string                  → composite key used to map back the inserted ID
+     *   - statusLogs: array               → rows for employee_attendance_status_logs
+     *   - payrollAccruedItems: array      → rows for payroll_accrued_allowance_incomes
+     *   - leaveAchieveLogs: array         → rows for employee_leave_achieve_logs
+     */
+    public function process(
+        object     $row,
+        string     $date,
+        object    $shift,
+        ?object    $publicHoliday,
+        ?object    $empHoliday,
+        ?Collection $holidayDutyRequisitions,
+        ?object    $otRequisition,
+        ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
+        ?array      $manualPunch = null
+    ): array {
+        // ── Manual punch override ─────────────────────────────────────────────────
+        if ($manualPunch) {
+            $fakeTemps = collect();
+            if (!empty($manualPunch['in_time'])) {
+                $fakeTemps->push((object)[
+                    'punch_datetime' => $date . ' ' . $manualPunch['in_time'],
                 ]);
             }
+            if (!empty($manualPunch['out_time'])) {
+                $fakeTemps->push((object)[
+                    'punch_datetime' => $date . ' ' . $manualPunch['out_time'],
+                ]);
+            }
+            $row->employeeAttendanceTemps = $fakeTemps;
+            $this->isManual = 1;
+            $this->source = 'manual';
         }
 
-        $result['triggered'] = true;
+        Log::warning('tempAtt:', ['tempAtt'=>$row->employeeAttendanceTemps]);
+
+        $now = date('Y-m-d H:i:s');
+
+        $result = [
+            'attendance'          => null,
+            'rowKey'              => '',
+            'statusLogs'          => [],
+            'payrollAccruedItems' => [],
+            'leaveAchieveLogs'    => [],
+            'skip'                => false,
+        ];
+
+        $statusesForLog     = [];
+        $leave_application_id = null;
+        $has_halfday_leave  = false;
+
+        // ── Determine whether employee has an approved OT requisition on this date ──
+        $hasOtRequisition = $otRequisition
+            && $otRequisition->where('ot_date_from', '>=', $date)
+                ->where('employee_user_id', $row->employee_user_id)
+                ->where('ot_date_to', '<=', $date)
+                ->exists();
+
+        // ── Resolve first / last punches for this date ────────────────────────────
+        [$first, $last] = $this->resolveFirstLastPunch($row, $date, $shift);
+
+        Log::warning('Debug:', ['first'=>$first, 'last'=>$last]);
+
+        // ── No punches at all: absent / leave / holiday ───────────────────────────
+        if ($row->employeeAttendanceTemps->isEmpty()) {
+            $statusesForLog = $this->resolveAbsentStatuses(
+                $date, $leaveApplicationDetails, $publicHoliday, $empHoliday
+            );
+
+            $result['statusLogs'] = $this->buildStatusLogRows(
+                $row->employee_user_id, $leave_application_id, $date, $now, $statusesForLog
+            );
+            // Still build a bare attendance row so the date is recorded
+            $result['attendance'] = $this->buildAttendanceRow(
+                $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
+            );
+            $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
+
+            return $result;
+        }
+
+        // ── Overnight checkout: update *previous* day's record and skip this date ─
+        if ($this->handleOvernightCheckoutForNormalShift($row, $date, $shift, $first, $last, $now, $statusesForLog)) {
+            $result['skip'] = true;
+            return $result;
+        }
+        Log::warning('after overnight check', [$result]);
+
+        // ── Overnight shift: resolve out-date / out-time or delegate to next day ──
+        [$outDate, $outTime] = $this->resolveOutDateTime($row, $date, $shift, $first, $last);
+        Log::warning('before overnight shift', [$result]);
+        // ── Night shift cross-day checkout update ─────────────────────────────────
+        if ($this->handleNightShiftCheckout($row, $date, $shift, $first, $last, $now, $result)) {
+            $result['skip'] = true;
+            return $result;
+        }
+        Log::warning('after overnight shift', [$result]);
+
+        // ── Shift defaults ────────────────────────────────────────────────────────
+        $shiftStart = $shift->clock_in      ?? '09:00:00';
+        $shiftEnd   = $shift->clock_out     ?? '18:00:00';
+        $graceParts = explode(':', $shift->shift_grace_time ?? '00:00:00');
+        $grace = ($graceParts[0] * 60) + $graceParts[1];
+        $workingHours = $this->calculateWorkingHours($first, $last, $shift);
+        $inTime  = $first ? Carbon::parse($first->punch_datetime)->format('H:i:s') : null;
+        $outTime = $last  ? Carbon::parse($last->punch_datetime)->format('H:i:s')  : null;
+        $outDate = $last  ? Carbon::parse($last->punch_datetime)->format('Y-m-d')  : null;
+
+        $rowKey = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, $inTime, $outTime, $now);
+        // ── Attendance statuses ───────────────────────────────────────────────────
+        $this->applyPresentOrLateStatus(
+            $row, $date, $shift, $first, $shiftStart, $grace, $now, $statusesForLog
+        );
+
+        $this->applyHolidayDutyStatuses(
+            $row, $date, $publicHoliday, $empHoliday, $holidayDutyRequisitions,
+            $statusesForLog, $result, $now, $rowKey
+        );
+
+        $this->applyIncompleteInOutStatus($row, $date, $shift, $first, $statusesForLog);
+        $this->applyEarlyOutStatus($date, $shift, $last, $shiftEnd, $statusesForLog);
+
+        $has_halfday_leave = $this->applyFirstHalfDayStatus(
+            $date, $shift, $first, $last, $leaveApplicationDetails, $statusesForLog
+        );
+
+        $this->applySecondHalfDayStatus(
+            $date, $shift, $first, $last, $leaveApplicationDetails, $has_halfday_leave, $statusesForLog
+        );
+
+        $this->applyBothHalfDayAbsentStatus(
+            $date, $shift, $first, $last, $leave_application_id, $statusesForLog
+        );
+
+        // ── OT calculation ────────────────────────────────────────────────────────
+        $transferedToOTStatus = false;
+        /* $transferedToOTStatus = ($first && $last)
+            ? calculateOtHours($row, $otRequisition, $hasOtRequisition, $shift, $first, $last, $this->systemUserId)
+            : false; */
+
+        // ── Join date flag ────────────────────────────────────────────────────────
+        $isJoin = ($date === $row->joining_date) ? 1 : 0;
+
+        // ── Assemble result ───────────────────────────────────────────────────────
+        $result['rowKey']    = $rowKey;
+        $result['attendance'] = $this->buildAttendanceRow(
+            $row, $date, $shift, $inTime, $outDate, $outTime,
+            $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours
+        );
+        $result['statusLogs'] = $this->buildStatusLogRows(
+            $row->employee_user_id, $leave_application_id, $date, $now, $statusesForLog
+        );
+
         return $result;
     }
 
-    // ─────────────────────────────────────────────
-    // Step 8 — Holiday Compensation
-    // ─────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Private helpers
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    private function handleHolidayCompensation(AttendanceDTO $dto, array $holidayData): array
+    private function resolveFirstLastPunch(object $row, string $date, object $shift): array
     {
-        $result = ['compensation_leave_earned' => false, 'cash_award' => 0.0];
-
-        $hasAttendance = $dto->inTime !== null && $dto->outTime !== null;
-
-        if (!$holidayData['is_holiday'] || !$hasAttendance) {
-            return $result;
+        if ($row->employeeAttendanceTemps->isEmpty()) {
+            return [null, null];
         }
 
-        $date           = $dto->date;
-        $employeeId     = $dto->employeeId;
-        $publicHoliday  = $holidayData['public_holiday'];
+        $temps = $row->employeeAttendanceTemps->unique('punch_datetime');
 
-        $approved = HolidayDutyRequisition::where('date_from', '<=', $date)
-            ->where('date_to', '>=', $date)
-            ->where('holiday_duty_requisitions.status', 'Approved')
-            ->whereNotNull('holiday_duty_requisitions.approved_at')
-            ->join('holiday_duty_requisition_details', function ($join) use ($employeeId) {
-                $join->on('holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
-                    ->where('holiday_duty_requisition_details.employee_user_id', $employeeId)
-                    ->where('holiday_duty_requisition_details.status', 'Approved')
-                    ->whereNotNull('holiday_duty_requisition_details.approved_at');
-            })
-            ->exists();
+        $forDate = $temps->filter(fn($t) => Carbon::parse($t->punch_datetime)->isSameDay($date));
 
-        if (!$approved) {
-            return $result;
+        Log::warning('test', ['forDate'=>$forDate]);
+
+
+        $first = $forDate->sortBy('punch_datetime')->first();
+        $last  = $forDate->sortByDesc('punch_datetime')->first();
+
+        Log::warning('test', [$first, $last, $first->punch_datetime, $last->punch_datetime]);
+
+        if ($first && $first->punch_datetime instanceof Carbon) {
+            $first->punch_datetime = $first->punch_datetime->toDateTimeString();
+        }
+        if ($last && $last->punch_datetime instanceof Carbon) {
+            $last->punch_datetime = $last->punch_datetime->toDateTimeString();
+        }
+        if ($first && $last && (string) $first->punch_datetime === (string) $last->punch_datetime) {
+            $last = null;
         }
 
-        // Determine leave validity
-        $leaveValidityDays = $this->employee->hasLeavePolicyDetail
-            ->where('leave_head_id', 5)->first()?->leave_avail_validity_days;
+        // Single punch: treat out as unknown
+        /* if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
+            $last = null; 
+        } */
 
-        $validityDate = $leaveValidityDays
-            ? Carbon::parse($date)->addDays($leaveValidityDays)->toDateString()
-            : date('Y-12-31');
+        Log::warning('test', [$first, $last]);
 
-        // Log earned leave
-        EmployeeLeaveAchieveLog::create([
-            'leave_head_id'           => 5,
-            'validity_date'           => $validityDate,
-            'employee_attendance_id'  => null, // Linked after attendance created
-            'leave_count'             => 1,
-            'leave_final_destination' => 2,
-            'created_user_id'         => $this->systemUserId,
-            'created_at'              => $this->now,
-        ]);
+        return [$first, $last];
+    }
 
-        // Update or create leave balance
-        $leaveBalance = EmployeeLeaveBalance::where('employee_user_id', $employeeId)
-            ->where('leave_head_id', 5)
-            ->where('fiscal_year', Carbon::parse($date)->year)
+    private function resolveAbsentStatuses(
+        string      $date,
+        ?Collection $leaveApplicationDetails,
+        ?object     $publicHoliday,
+        ?object     $empHoliday
+    ): array {
+        if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 8)->contains('leave_date', $date)) {
+            return [8]; // Full-day approved leave
+        }
+
+        if ($publicHoliday) {
+            return [9]; // Public Holiday Absent
+        }
+
+        if ($empHoliday) {
+            return [17]; // Weekend / employee-specific holiday absent
+        }
+
+        return [0]; // Absent
+    }
+
+    /**
+     * Handle the edge case where an overnight punch from a *normal* shift
+     * belongs to the previous day. Updates the previous day's record and
+     * returns true to signal "skip current date".
+     */
+    private function handleOvernightCheckoutForNormalShift(
+        object $row, string $date, ?object $shift,
+        ?object $first, ?object $last, string $now, array &$statusesForLog
+    ): bool {
+        Log::warning('test before:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) . '<=' . strtotime($first->punch_datetime)]);
+        if (
+            !$first || !$shift || $shift->is_overnight != 0 || !$first->punch_datetime ||
+            strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)
+        ) {
+            return false;
+        }
+
+        Log::warning('test after:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)]);
+
+        $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
+            ->where('date', date('Y-m-d', strtotime($date . ' -1 day')))
+            ->whereNotNull('in_time')
+            ->whereNull('out_time')
+            ->whereNull('out_date')
             ->first();
 
-        if ($leaveBalance) {
-            $leaveBalance->increment('achived_this_year', 1);
-        } else {
-            EmployeeLeaveBalance::create([
-                'employee_user_id'  => $employeeId,
-                'leave_head_id'     => 5,
-                'leave_policy_id'   => $this->employee->leave_policy_id,
-                'achived_this_year' => 1,
-                'current_balance'   => 1,
-                'valid_until'       => $validityDate,
-                'fiscal_year'       => Carbon::parse($date)->year,
-                'created_user_id'   => $this->systemUserId,
-                'created_at'        => $this->now,
+        if ($prevAttendance) {
+            $prevAttendance->update([
+                'out_time' => date('H:i:s', strtotime($first->punch_datetime?? $last->punch_datetime)),
+                'out_date' => $date,
             ]);
-        }
-
-        $result['compensation_leave_earned'] = true;
-
-        // Festival Holiday cash award
-        if ($publicHoliday && $publicHoliday->holiday_type_id == 10) {
-            $grossSalary  = $this->employee->gross_salary ?? 0;
-            $daysInMonth  = Carbon::parse($date)->daysInMonth;
-            $cashAward    = $grossSalary / $daysInMonth;
-
-            PayrollAccruedAllowanceIncome::create([
-                'employee_user_id' => $employeeId,
-                'amount'           => $cashAward,
-                'type'             => 8,
-                'month'            => Carbon::parse($date)->month,
-                'year'             => Carbon::parse($date)->year,
-                'date'             => $date,
-                'created_user_id'  => $this->systemUserId,
-                'created_at'       => $this->now,
-            ]);
-
-            $result['cash_award'] = $cashAward;
-        }
-
-        return $result;
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 9 — Overtime
-    // ─────────────────────────────────────────────
-
-    private function calculateOvertime(AttendanceDTO $dto, ?EmployeeOtRequisition $otRequisition): array
-    {
-        $result = ['overtime_hours' => 0.0, 'transfered_to_ot' => false];
-
-        $hasAttendance = $dto->inTime !== null && $dto->outTime !== null;
-
-        if (!$otRequisition || !$hasAttendance) {
-            return $result;
-        }
-
-        // Only process if requisition is approved
-        $approved = EmployeeOtRequisition::where('ot_date_from', '<=', $dto->date)
-            ->where('ot_date_to', '>=', $dto->date)
-            ->where('employee_user_id', $dto->employeeId)
-            ->whereNotNull('approval_date')
-            ->whereNull('rejection_date')
-            ->exists();
-
-        if (!$approved) {
-            return $result;
-        }
-
-        $date  = $dto->date;
-        $inTs  = strtotime("$date {$dto->inTime}");
-        $outTs = strtotime("$date {$dto->outTime}");
-
-        $workingHours = ($outTs - $inTs) / 3600;
-
-        $lunchBreak = 0;
-        if (!empty($this->shift->lunch_meal_hour)) {
-            [$h, $m, $s] = array_map('intval', explode(':', $this->shift->lunch_meal_hour));
-            $lunchBreak = $h + ($m / 60) + ($s / 3600);
-        }
-
-        $effectiveWorking  = $workingHours - $lunchBreak;
-        $shiftWorkingHours = (strtotime("$date {$this->shiftEnd}") - strtotime("$date {$this->shiftStart}")) / 3600;
-        $overtimeHours     = max(0, $effectiveWorking - $shiftWorkingHours);
-
-        $result['overtime_hours']  = $overtimeHours;
-        $result['transfered_to_ot'] = $overtimeHours > 0;
-
-        return $result;
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 10 & 11 — Persist Attendance
-    // ─────────────────────────────────────────────
-
-    private function persistAttendance(
-        AttendanceDTO $dto,
-        array $statuses,
-        ?int $rosterId,
-        array $holidayData,
-        array $otResult
-    ): EmployeeAttendance {
-        $date       = $dto->date;
-        $employeeId = $dto->employeeId;
-        $inTime     = $dto->inTime;
-        $outTime    = $dto->outTime;
-
-        $hasAttendance = $inTime !== null && $outTime !== null;
-
-        $inTs  = $hasAttendance ? strtotime("$date $inTime")  : null;
-        $outTs = $hasAttendance ? strtotime("$date $outTime") : null;
-
-        // Delete existing record for this date to avoid duplicates
-        EmployeeAttendance::where('employee_user_id', $employeeId)
-            ->where('date', $date)
-            ->delete();
-
-        return EmployeeAttendance::create([
-            'emp_code'                                  => $this->employee->emp_code,
-            'employee_user_id'                          => $employeeId,
-            'department_id'                             => $this->employee->department_id,
-            'section_id'                                => $this->employee->section_id,
-            'shift_id'                                  => $this->employee->shift_id,
-            'shift_start_time'                          => $this->shiftStart,
-            'shift_grace_time'                          => $this->grace,
-            'shift_end_time'                            => $this->shiftEnd,
-            'date'                                      => $date,
-            'in_time'                                   => $inTime,
-            'out_date'                                  => $date,
-            'out_time'                                  => $outTime,
-            'on_leave_status'                           => null,
-            'transfered_to_ot'                          => $otResult['transfered_to_ot'] ? 1 : 0,
-            'is_holiday'                                => $holidayData['is_holiday'] ? 1 : 0,
-            'is_join'                                   => ($date == $this->employee->joining_date) ? 1 : 0,
-            'is_manual'                                 => $dto->source === 'manual' ? 1 : 0,
-            'is_roster'                                 => $rosterId ? 1 : 0,
-            'roster_id'                                 => $rosterId,
-            'absent_bridge'                             => 0,
-            'source'                                    => $dto->source,
-            'is_corrected'                              => 0,
-            'working_hours'                             => $hasAttendance ? (($outTs - $inTs) / 3600) : 0,
-            'employee_applied_attendance_correction_id' => null,
-            'created_user_id'                           => $this->systemUserId,
-            'updated_user_id'                           => $this->systemUserId,
-            'created_at'                                => $this->now,
-        ]);
-    }
-
-    // ─────────────────────────────────────────────
-    // Step 12 — Status Logs
-    // ─────────────────────────────────────────────
-
-    private function persistStatusLogs(int $attendanceId, AttendanceDTO $dto, array $statuses): void
-    {
-        foreach ($statuses as $status) {
-            EmployeeAttendanceStatusLog::create([
-                'employee_user_id'       => $dto->employeeId,
-                'employee_attendance_id' => $attendanceId,
+            EmployeeAttendanceStatusLog::insert([
+                'employee_user_id'       => $row->employee_user_id,
+                'employee_attendance_id' => $prevAttendance->id,
                 'leave_application_id'   => null,
-                'attendance_status'      => $status,
-                'attendance_date'        => $dto->date,
+                'attendance_status'      => 12, // Night Duty (checkout)
+                'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
-                'created_at'             => $this->now,
+                'created_at'             => $now,
             ]);
+            $amount = ($row->gross_salary / date('t')) * 1;
+            PayrollAccruedAllowanceIncome::insert(
+                [
+                'employee_user_id'       => $row->employee_user_id,
+                'employee_attendance_id' => $prevAttendance->id,
+                'amount'                 => $amount,
+                'type'                   => 6, // Night Duty Allowance
+                'month'                  => date('m'),
+                'year'                   => date('Y'),
+                'date'                   => $date,
+                'created_user_id'        => $this->systemUserId,
+                'created_at'             => $now,
+                ]
+            );
         }
+        return true;
     }
 
-    // ─────────────────────────────────────────────
-    // Step 13 — Link Leave Achieve Log
-    // ─────────────────────────────────────────────
+    private function resolveOutDateTime(
+        object $row, string $date, ?object $shift, ?object $first, ?object $last
+    ): array {
+        if (
+            $first && $shift && $shift->is_overnight == 1 &&
+            strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)
+        ) {
+            return [null, null]; // Will be resolved on next day
+        }
 
-    private function linkLeaveAchieveLog(int $attendanceId, bool $compensationLeaveEarned): void
+        $outDate = $last ? Carbon::parse($last->punch_datetime)->format('Y-m-d') : null;
+        $outTime = $last ? Carbon::parse($last->punch_datetime)->format('H:i:s') : null;
+
+        return [$outDate, $outTime];
+    }
+
+    /**
+     * For overnight shifts: if the last punch belongs to the next day checkout window,
+     * update previous day's record, generate allowance, and signal skip.
+     */
+    private function handleNightShiftCheckout(
+        object $row, string $date, ?object $shift, ?object $first,
+        ?object $last, string $now, array &$result
+    ): bool {
+        Log::warning('Before overnight duty check:', [$row, $date, $shift, $last]);
+        $last = $last ?? $first;
+        if (
+            !$shift || $shift->is_overnight != 1 || !$last ||
+            !(
+                strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out . ' -4 hours') ||
+                strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out)
+            )
+        ) {
+            return false;
+        }
+        Log::warning('after overnight duty check:', [$row, $date, $shift, $last]);
+
+        $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
+            ->where('date', date('Y-m-d', strtotime($date . ' -1 day')))
+            ->whereNotNull('in_time')
+            ->first();
+
+        Log::warning('Previous att:', [$prevAttendance]);
+
+        if ($prevAttendance) {
+            $prevAttendance->update([
+                'out_time' => date('H:i:s', strtotime($last->punch_datetime)),
+                'out_date' => $date,
+            ]);
+
+            EmployeeAttendanceStatusLog::insert([
+                'employee_user_id'       => $row->employee_user_id,
+                'employee_attendance_id' => $prevAttendance->id,
+                'leave_application_id'   => null,
+                'attendance_status'      => 13, // Night Duty confirmed
+                'attendance_date'        => $date,
+                'created_user_id'        => $this->systemUserId,
+                'created_at'             => $now,
+                'is_manual'              => $this->isManual,
+                'source'                 => $this->source,
+            ]);
+        }
+
+        return true;
+    }
+
+    private function calculateWorkingHours(?object $first, ?object $last, ?object $shift): float
     {
-        if (!$compensationLeaveEarned) {
+        if (!$first || !$last) {
+            return 0;
+        }
+ 
+        // punch_datetime is always a string at this point (normalised in resolveFirstLastPunch)
+        $firstCarbon = Carbon::parse((string) $first->punch_datetime);
+        $lastCarbon  = Carbon::parse((string) $last->punch_datetime);
+        $hours       = $firstCarbon->diffInHours($lastCarbon);
+ 
+        if ($shift && $hours >= 4 && !empty($shift->lunch_meal_time)) {
+            $parts = explode(':', $shift->lunch_meal_time . ':0');
+            $h = (int) ($parts[0] ?? 0);
+            $m = (int) ($parts[1] ?? 0);
+            $hours -= ($h + ($m / 60));
+        }
+ 
+        return max(0, $hours);
+    }
+
+    private function applyPresentOrLateStatus(
+        object $row, string $date, ?object $shift, ?object $first,
+        string $shiftStart, int $grace, string $now, array &$statusesForLog
+    ): void {
+        if (!$first || !$shift) {
             return;
         }
 
-        EmployeeLeaveAchieveLog::where('created_user_id', $this->systemUserId)
-            ->where('created_at', $this->now)
-            ->whereNull('employee_attendance_id')
-            ->update(['employee_attendance_id' => $attendanceId]);
+        $punchTime   = strtotime($first->punch_datetime);
+        $graceEnd    = strtotime($date . ' ' . $shiftStart . " +$grace minutes");
+        $checkInStart = strtotime($date . ' ' . $shift->start_check_in_time);
+
+        if ($punchTime <= $graceEnd && $punchTime >= $checkInStart) {
+            $statusesForLog[] = 1; // Present
+            return;
+        }
+
+        if ($punchTime > $graceEnd) {
+            $statusesForLog[] = 2; // Late
+            $this->processLateDeduction($row, $date, $shift, $first, $now);
+        }
+    }
+
+    private function processLateDeduction(
+        object $row, string $date, ?object $shift, object $first, string $now
+    ): void {
+        $lateDeductionPolicy = $row->hasLateDeductionPolicy;
+        if (!$lateDeductionPolicy) {
+            return;
+        }
+
+        if (
+            $lateDeductionPolicy->deduction_basis === 'Day' &&
+            (!empty($row->lateDays) && $row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)) === 0
+        ) {
+            // Purge existing month records and rebuild from scratch
+            $recordIds = LateAttendanceRecord::where('employee_user_id', $row->employee_user_id)
+                ->where('month', date('m', strtotime($date)))
+                ->where('year', date('Y', strtotime($date)))
+                ->pluck('id');
+
+            if ($recordIds->isNotEmpty()) {
+                LateAttendanceRecordDetail::whereIn('late_attendance_record_id', $recordIds)->delete();
+                LateAttendanceRecord::whereIn('id', $recordIds)->delete();
+            }
+
+            $lateCount = !empty($row->lateDays) ? $row->lateDays->count() : 0;
+            $cycle     = $lateDeductionPolicy->max_late_days + 1;
+            $rowsToInsert = intdiv($lateCount, $cycle);
+
+            for ($i = 0; $i < $rowsToInsert; $i++) {
+                $lateRecord   = LateAttendanceRecord::create([
+                    'employee_user_id' => $row->employee_user_id,
+                    'month'            => date('m', strtotime($date)),
+                    'year'             => date('Y', strtotime($date)),
+                    'created_user_id'  => $this->systemUserId,
+                    'created_at'       => $now,
+                ]);
+                $totalSeconds = 0;
+
+                for ($j = 0; $j < $cycle && ($i * $cycle + $j) < $lateCount; $j++) {
+                    $lateDay = $row->lateDays->sortBy('attendance_date')->values()[$i * $cycle + $j] ?? null;
+                    if (!$lateDay) {
+                        continue;
+                    }
+
+                    $shiftCheckinTime = Carbon::parse($date . ' ' . ($shift->check_in ?? '09:00:00'));
+                    $lateSeconds      = Carbon::parse($first->punch_datetime)->diffInSeconds($shiftCheckinTime);
+                    $totalSeconds    += $lateSeconds;
+
+                    LateAttendanceRecordDetail::create([
+                        'late_attendance_record_id' => $lateRecord->id,
+                        'date'                      => $lateDay->attendance_date,
+                        'late_seconds'              => $lateSeconds,
+                    ]);
+                }
+
+                LateAttendanceRecord::where('id', $lateRecord->id)
+                    ->update(['late_minutes' => $totalSeconds / 60]);
+            }
+        }
+    }
+
+    private function applyHolidayDutyStatuses(
+        object $row, string $date,
+        ?object $publicHoliday, ?object $empHoliday,
+        Collection $holidayDutyRequisitions,
+        array &$statusesForLog, array &$result,
+        string $now, string $rowKey
+    ): void {
+        $anyHoliday = $publicHoliday || $empHoliday;
+        if(!$anyHoliday){
+            return;
+        }
+        if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0) {
+            $statusesForLog[] = $empHoliday ? 20 : 21; // Weekend Duty / Public Holiday Duty
+            $statusesForLog[] = 14;                     // Holiday Duty
+        }
+
+        $dutyOnDate = $holidayDutyRequisitions->where('duty_date', $date);
+
+        Log::warning('Holiday Duty:', ['dutyOnDate'=>$dutyOnDate]);
+
+        $hasApprovedRequisition = optional($dutyOnDate)
+            ->where('employee_user_id', $row->employee_user_id)
+            ->where('duty_date', $date)
+            ->isNotEmpty() ?? false;
+
+        if ($anyHoliday && $dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
+            $statusesForLog[] = 19; // Unauthorized
+            return;
+        }
+
+        $balanceStat = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
+            ->where('leave_head_id', 5)
+            ->where('fiscal_year', date('Y'))
+            ->first();
+
+        // Grant compensatory leave
+        $employeeLeaveBalance = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
+            ->where('leave_head_id', 5)
+            ->where('fiscal_year', date('Y'))->first();
+
+        if(!$employeeLeaveBalance){
+            EmployeeLeaveBalance::create([
+                'employee_user_id'=>$row->employee_user_id,
+                'leave_head_id'=>5,
+                'leave_policy_id'=>4,
+                'fiscal_year'=> date('Y'),
+                'created_user_id'=> $this->systemUserId,
+                'achived_this_year'=>1,
+                'current_balance'=>1
+            ]);
+        }else{
+            $employeeLeaveBalance->achived_this_year = 1;
+            $employeeLeaveBalance->current_balance = 1;
+            $employeeLeaveBalance->save();
+        }
+
+        $balanceStat = $employeeLeaveBalance;
+
+        $validityDays   = optional(
+            $row->hasLeavePolicyDetail->where('leave_head_id', 5)->first()
+        )->leave_avail_validity_days ?? 0;
+        $leaveValidity  = date('Y-m-d', strtotime($date . " +$validityDays days"));
+
+        $result['leaveAchieveLogs'][] = [
+            'leave_head_id'             => 5,
+            'validity_date'             => $leaveValidity,
+            'employee_attendance_id'    => null, // filled after bulk insert
+            'leave_count'               => 1,
+            'leave_final_destination'   => 'Compensatory leave earned from Festival Holiday duty',
+            'created_user_id'           => $this->systemUserId,
+            'created_at'                => $now,
+            'employee_user_id'          => $row->employee_user_id,
+            'employee_leave_balance_id' => $balanceStat?->id,
+        ];
+
+        // Festival holiday cash incentive
+        if ($publicHoliday && $publicHoliday->holiday_type_id == 10) {
+            $result['payrollAccruedItems'][] = [
+                'employee_user_id'       => $row->employee_user_id,
+                'employee_attendance_id' => null,
+                'amount'                 => ($row->gross_salary / date('t')) * ($row->employeeOtPolicy->multiplier ?? 1) * 2,
+                'type'                   => 8, // Festival Duty Allowance
+                'month'                  => date('m'),
+                'year'                   => date('Y'),
+                'date'                   => $date,
+                'created_user_id'        => $this->systemUserId,
+                'created_at'             => $now,
+            ];
+        }
+
+        if ($balanceStat) {
+            $statusesForLog[] = 18; // Compensation Leave Earned
+        }
+    }
+
+    private function applyIncompleteInOutStatus(
+        object $row, string $date, ?object $shift, ?object $first, array &$statusesForLog
+    ): void {
+        if ($row->employeeAttendanceTemps->count() !== 1 || !$shift || !$first) {
+            return;
+        }
+
+        if (
+            strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time) &&
+            strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
+        ) {
+            $statusesForLog[] = 11; // Incomplete Out
+        } else {
+            $statusesForLog[] = 10; // Incomplete In
+        }
+    }
+
+    private function applyEarlyOutStatus(
+        string $date, ?object $shift, ?object $last, string $shiftEnd, array &$statusesForLog
+    ): void {
+        if (!$last || !$shift) {
+            return;
+        }
+
+        if (
+            strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out_start_time) &&
+            strtotime($last->punch_datetime) <  strtotime($date . ' ' . $shiftEnd)
+        ) {
+            $statusesForLog[] = 7; // Early Out
+        }
+    }
+
+    /** Returns true if a first-half-day flag was set. */
+    private function applyFirstHalfDayStatus(
+        string $date, ?object $shift, ?object $first, ?object $last,
+        ?Collection $leaveApplicationDetails, array &$statusesForLog
+    ): bool {
+        if (
+            !$first || !$last || !$shift ||
+            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time) &&
+              strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day)) ||
+            !(strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out))
+        ) {
+            return false;
+        }
+
+        if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date)) {
+            $statusesForLog[] = 4; // Half-day 1st (Approved)
+        } else {
+            $statusesForLog[] = 3; // Half-day 1st (Unapproved)
+        }
+
+        return true;
+    }
+
+    private function applySecondHalfDayStatus(
+        string $date, ?object $shift, ?object $first, ?object $last,
+        ?Collection $leaveApplicationDetails, bool $has_halfday_leave, array &$statusesForLog
+    ): void {
+        if (
+            $has_halfday_leave || !$first || !$last || !$shift ||
+            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day)) ||
+            !(strtotime($last->punch_datetime)  < strtotime($date . ' ' . $shift->clock_out_start_time))
+        ) {
+            return;
+        }
+
+        if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 6)->contains('leave_date', $date)) {
+            $statusesForLog[] = 6; // Half-day 2nd (Approved)
+        } else {
+            $statusesForLog[] = 5; // Half-day 2nd (Unapproved)
+        }
+    }
+
+    private function applyBothHalfDayAbsentStatus(
+        string $date, ?object $shift, ?object $first, ?object $last,
+        mixed $leave_application_id, array &$statusesForLog
+    ): void {
+        if (!$first || !$last || !$shift || $leave_application_id !== null) {
+            return;
+        }
+
+        $condition1 = strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->end_check_in_time)
+            && $last
+            && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time);
+
+        $condition2 = strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day)
+            && $last
+            && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out_start_time);
+
+        $condition3 = strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time)
+            && strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->end_check_in_time)
+            && $last
+            && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day);
+
+        if ($condition1 || $condition2 || $condition3) {
+            $statusesForLog[] = 0;  // Absent
+            $statusesForLog[] = 15; // Absent (2 half-days)
+        }
+    }
+
+    // ─── Row builders ────────────────────────────────────────────────────────
+
+    private function buildAttendanceRow(
+        object $row, string $date, ?object $shift,
+        ?string $inTime, ?string $outDate, ?string $outTime,
+        bool $transferedToOTStatus,
+        ?object $publicHoliday, ?object $empHoliday,
+        int $isJoin, string $now, float $workingHours = 0
+    ): array {
+        return [
+            'emp_code'                                   => $row->emp_code,
+            'employee_user_id'                           => $row->employee_user_id,
+            'department_id'                              => $row->department_id,
+            'section_id'                                 => $row->section_id,
+            'shift_id'                                   => $row->shift_id,
+            'shift_start_time'                           => $shift->clock_in      ?? '09:00:00',
+            'shift_grace_time'                           => $shift->shift_grace_time ?? 0,
+            'shift_end_time'                             => $shift->clock_out     ?? '18:00:00',
+            'date'                                       => $date,
+            'in_time'                                    => $inTime,
+            'out_date'                                   => $outDate,
+            'out_time'                                   => $outTime,
+            'on_leave_status'                            => null,
+            'transfered_to_ot'                           => $transferedToOTStatus ? 1 : 0,
+            'is_holiday'                                 => ($publicHoliday || $empHoliday) ? 1 : 0,
+            'is_join'                                    => $isJoin,
+            'is_manual'                                  => $this->isManual,
+            'absent_bridge'                              => 0,
+            'source'                                     => $this->source,
+            'is_corrected'                               => 0,
+            'working_hours'                              => $workingHours,
+            'employee_applied_attendance_correction_id'  => null,
+            'created_user_id'                            => $this->systemUserId,
+            'updated_user_id'                            => $this->systemUserId,
+            'deleted_user_id'                            => null,
+            'created_at'                                 => $now,
+        ];
+    }
+
+    private function buildStatusLogRows(
+        int $employeeUserId, mixed $leave_application_id,
+        string $date, string $now, array $statuses
+    ): array {
+        $rows = [];
+        foreach ($statuses as $status) {
+            $rows[] = [
+                'employee_user_id'       => $employeeUserId,
+                'employee_attendance_id' => null, // filled by the job after bulk insert
+                'leave_application_id'   => $leave_application_id,
+                'attendance_status'      => $status,
+                'attendance_date'        => $date,
+                'created_user_id'        => $this->systemUserId,
+                'created_at'             => $now,
+            ];
+        }
+        return $rows;
+    }
+
+    private function makeRowKey(
+        string $empCode, int $employeeUserId, string $date,
+        ?string $inTime, ?string $outTime, string $now
+    ): string {
+        return $empCode . '|' . $employeeUserId . '|' . $date . '|' . ($inTime ?? '') . '|' . ($outTime ?? '') . '|' . $now;
     }
 }

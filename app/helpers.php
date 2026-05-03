@@ -48,6 +48,11 @@ if (!function_exists('calculateOtHours'))
 {
     function calculateOtHours($empOfficialDataRow, $otRequisition, $hasOtRequisition, $shift, $firstPunch, $lastPunch, $userId)
     {
+        $time = explode(':', $shift->lunch_meal_time);
+        $lunchMealHour = $time[0] ?? 0;
+        $lunchMealMinute = $time[1] ?? 0;
+        $lunchMealHour = intval($lunchMealHour) +   ((int)$lunchMealMinute / 60);
+
         $otPolicy = $empOfficialDataRow->employeeOtPolicy;
 
         $minimum_ot_hours = $otPolicy?->minimum_ot_hours ?? 0;
@@ -56,8 +61,8 @@ if (!function_exists('calculateOtHours'))
         $special_allowance_eligibility = $otPolicy?->special_allowance_eligibility ?? 0;
         
         $workingHours = strtotime($lastPunch->punch_datetime) - strtotime($firstPunch->punch_datetime);
-        $workingHours = $workingHours / 60 / 60;
-        $otHours = $workingHours - $shift->lunch_meal_hour - $shift->total_working_hours - $shift_break_duration ;
+        $workingHours = $workingHours ?  $workingHours / 60 / 60 : 0;
+        $otHours = $workingHours - $lunchMealHour - intval($shift->total_working_hours) - $shift_break_duration ;
 
 
         
