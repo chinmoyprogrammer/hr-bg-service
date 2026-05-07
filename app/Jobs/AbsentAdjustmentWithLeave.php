@@ -12,22 +12,21 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class RecalculateAttendanceJob extends Job implements ShouldQueue
+class AbsentAdjustmentWithLeave extends Job implements ShouldQueue
 {
     use InteractsWithQueue, Queueable, SerializesModels;
-
-    protected $leaveApplicationId;
+    protected array $payload;
 
     /**
      * Create a new job instance.
      *
-     * @param int $leaveApplicationId
+     * @param array $payload
      */
-    public function __construct($leaveApplicationId)
+    public function __construct(array $payload)
     {
-        $this->leaveApplicationId = $leaveApplicationId;
+        $this->payload    = $payload;
         $this->connection = 'rabbitmq';
-        $this->queue = 'recalculateAttendance_queue';
+        $this->queue      = 'absentAdjustmentWithLeave_queue';
     }
 
     /**
@@ -37,8 +36,8 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
      */
     public function handle()
     {
-        Log::info('RecalculateAttendanceJob started for LeaveApplication ID: ' . $this->leaveApplicationId);
-
+        Log::info('AbsentAdjustmentWithLeave started for LeaveApplication ID: ', ['payload:'=> $this->payload]);
+        die;
         try {
             // 1. Get Leave Details (dates and employee)
             $leaveDetails = LeaveApplicationDetail::where('leave_application_id', $this->leaveApplicationId)->get();
@@ -60,6 +59,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                 ->get();
 
             foreach ($attendanceRecords as $attendance) {
+
                 $statusLog = EmployeeAttendanceStatusLog::where('employee_attendance_id', $attendance->id)->first();
 
                 // If currently Absent (3), update to Leave (4)
