@@ -79,13 +79,14 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     date('Y-m-t',  strtotime($endBoundary)),
                 ])
                 ->where('attendance_status', 2),
-        ])
-        ->whereIn('emp_code', function ($q) {
+        ])->get();
+        /* ->whereIn('emp_code', function ($q) {
             $q->select('emp_code')
             ->from('employee_attendance_temp')
             ->distinct();
-        })
-        ->get();
+        }) */
+        //->whereIn('emp_code', ['2508032'])
+        
         //208, 395, ->where('employee_user_id','=', 208)
 
         $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)

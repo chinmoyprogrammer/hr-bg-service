@@ -18,10 +18,15 @@ use function calculateOtHours;
 class AttendanceProcessingService
 {
     private int $systemUserId;
+    private bool $isManual;
+    private string $source;
+    private bool $isAbsentInFirstHalf;
 
     public function __construct()
     {
         $this->systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $this->isManual = 0;
+        $this->source = 'biometric';
     }
 
     /**
@@ -42,8 +47,30 @@ class AttendanceProcessingService
         ?object    $empHoliday,
         ?Collection $holidayDutyRequisitions,
         ?object    $otRequisition,
-        ?Collection $leaveApplicationDetails // keyed collection of LeaveApplicationDetail for employee
+        ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
+        ?array      $manualPunch = null
     ): array {
+        $this->isAbsentInFirstHalf = false;
+        // ── Manual punch override ─────────────────────────────────────────────────
+        if ($manualPunch) {
+            $fakeTemps = collect();
+            if (!empty($manualPunch['in_time'])) {
+                $fakeTemps->push((object)[
+                    'punch_datetime' => $date . ' ' . $manualPunch['in_time'],
+                ]);
+            }
+            if (!empty($manualPunch['out_time'])) {
+                $fakeTemps->push((object)[
+                    'punch_datetime' => $date . ' ' . $manualPunch['out_time'],
+                ]);
+            }
+            $row->employeeAttendanceTemps = $fakeTemps;
+            $this->isManual = 1;
+            $this->source = 'manual';
+        }
+
+        Log::warning('tempAtt:', ['tempAtt'=>$row->employeeAttendanceTemps]);
+
         $now = date('Y-m-d H:i:s');
 
         $result = [
@@ -69,11 +96,15 @@ class AttendanceProcessingService
         // ── Resolve first / last punches for this date ────────────────────────────
         [$first, $last] = $this->resolveFirstLastPunch($row, $date, $shift);
 
+        Log::warning('Debug:', ['first'=>$first, 'last'=>$last]);
+
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if ($row->employeeAttendanceTemps->isEmpty()) {
             $statusesForLog = $this->resolveAbsentStatuses(
                 $date, $leaveApplicationDetails, $publicHoliday, $empHoliday
             );
+
+            Log::warning('Debug Status Logs:', ['statusesForLog'=>$statusesForLog]);
 
             $result['statusLogs'] = $this->buildStatusLogRows(
                 $row->employee_user_id, $leave_application_id, $date, $now, $statusesForLog
@@ -83,7 +114,7 @@ class AttendanceProcessingService
                 $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
             );
             $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
-
+            Log::warning('Debug attendance:', ['attendance'=>$result['attendance']]);
             return $result;
         }
 
@@ -115,11 +146,7 @@ class AttendanceProcessingService
         $outDate = $last  ? Carbon::parse($last->punch_datetime)->format('Y-m-d')  : null;
 
         $rowKey = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, $inTime, $outTime, $now);
-        // ── Attendance statuses ───────────────────────────────────────────────────
-        $this->applyPresentOrLateStatus(
-            $row, $date, $shift, $first, $shiftStart, $grace, $now, $statusesForLog
-        );
-
+        
         $this->applyHolidayDutyStatuses(
             $row, $date, $publicHoliday, $empHoliday, $holidayDutyRequisitions,
             $statusesForLog, $result, $now, $rowKey
@@ -136,11 +163,16 @@ class AttendanceProcessingService
             $date, $shift, $first, $last, $leaveApplicationDetails, $has_halfday_leave, $statusesForLog
         );
 
+        // ── Attendance statuses ───
+        $this->applyPresentOrLateStatus(
+            $row, $date, $shift, $first, $shiftStart, $grace, $now, $statusesForLog
+        );
+
         $this->applyBothHalfDayAbsentStatus(
             $date, $shift, $first, $last, $leave_application_id, $statusesForLog
         );
 
-        // ── OT calculation ────────────────────────────────────────────────────────
+        // ── OT calculation ────
         $transferedToOTStatus = false;
         /* $transferedToOTStatus = ($first && $last)
             ? calculateOtHours($row, $otRequisition, $hasOtRequisition, $shift, $first, $last, $this->systemUserId)
@@ -172,7 +204,32 @@ class AttendanceProcessingService
             return [null, null];
         }
 
+        // Build a window for the check-in period
+        $start = Carbon::parse($date.' '.$shift->start_check_in_time);
+        $end   = Carbon::parse($date.' '.$shift->end_check_in_time);
+
+        // Group punches by datetime (removes exact duplicates)
         $temps = $row->employeeAttendanceTemps->unique('punch_datetime');
+
+        // Split into “in-window” and “out-of-window” punches
+        $inWindow  = $temps->filter(fn($t) =>
+            Carbon::parse($t->punch_datetime)->between($start, $end)
+        );
+        $outWindow = $temps->filter(fn($t) =>
+            !Carbon::parse($t->punch_datetime)->between($start, $end)
+        );
+
+        // If several punches fall inside the window keep only the first one
+        if ($inWindow->count() > 1) {
+            $inWindow = collect([$inWindow->sortBy('punch_datetime')->first()]);
+        }
+
+        // Re-assemble the collection
+        $temps = $inWindow->concat($outWindow);
+        // Group punches by datetime (removes exact duplicates)
+        $temps = $temps->unique('punch_datetime');
+        Log::warning('test', ['temps'=>$temps, 'employeeAttendanceTemps'=>$row->employeeAttendanceTemps]);
+        
 
         $forDate = $temps->filter(fn($t) => Carbon::parse($t->punch_datetime)->isSameDay($date));
 
@@ -191,10 +248,18 @@ class AttendanceProcessingService
             $last->punch_datetime = $last->punch_datetime->toDateTimeString();
         }
 
-        // Single punch: treat out as unknown
-        if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
-            $last = null; 
+        if ($first && $last && (string) $first->punch_datetime === (string) $last->punch_datetime) {
+            $last = null;
         }
+        // Replace the original collection with the cleaned one for the rest of the flow
+        $row->employeeAttendanceTemps = $temps;
+
+        Log::warning('test', ['first'=>$first, 'last'=>$last]);
+
+        // Single punch: treat out as unknown
+        /* if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
+            $last = null; 
+        } */
 
         Log::warning('test', [$first, $last]);
 
@@ -338,6 +403,8 @@ class AttendanceProcessingService
                 'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now,
+                'is_manual'              => $this->isManual,
+                'source'                 => $this->source,
             ]);
         }
 
@@ -374,8 +441,16 @@ class AttendanceProcessingService
         }
 
         $punchTime   = strtotime($first->punch_datetime);
-        $graceEnd    = strtotime($date . ' ' . $shiftStart . " +$grace minutes");
-        $checkInStart = strtotime($date . ' ' . $shift->start_check_in_time);
+        if($this->isAbsentInFirstHalf){
+            $secondHalfStart = $shift->second_half_day ?? date('H:i:s', strtotime($shift->first_half_day . ' + 1.5 hours'));
+            $graceEnd    = strtotime($date . ' ' . $secondHalfStart . " +$grace minutes");
+            $checkInStart = strtotime($date . ' ' . $shift->end);
+        }else{
+            $graceEnd    = strtotime($date . ' ' . $shiftStart . " +$grace minutes");
+            $checkInStart = strtotime($date . ' ' . $shift->start_check_in_time);
+        }
+
+        //Log::warning('graceEnd:', ['shift'=>$shift,'date'=>$date,'graceEnd'=>$graceEnd, 'checkInStart'=>$checkInStart, 'punchTime'=>$punchTime, 'secondHalfStart'=>$secondHalfStart]);
 
         if ($punchTime <= $graceEnd && $punchTime >= $checkInStart) {
             $statusesForLog[] = 1; // Present
@@ -383,7 +458,7 @@ class AttendanceProcessingService
         }
 
         if ($punchTime > $graceEnd) {
-            $statusesForLog[] = 2; // Late
+            $statusesForLog[] = 2; //Late
             $this->processLateDeduction($row, $date, $shift, $first, $now);
         }
     }
@@ -456,7 +531,10 @@ class AttendanceProcessingService
         string $now, string $rowKey
     ): void {
         $anyHoliday = $publicHoliday || $empHoliday;
-
+        if(!$anyHoliday){
+            return;
+        }
+        Log::warning('anyHoliday: = >'.$anyHoliday.'<');
         if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0) {
             $statusesForLog[] = $empHoliday ? 20 : 21; // Weekend Duty / Public Holiday Duty
             $statusesForLog[] = 14;                     // Holiday Duty
@@ -471,7 +549,7 @@ class AttendanceProcessingService
             ->where('duty_date', $date)
             ->isNotEmpty() ?? false;
 
-        if ($dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
+        if ($anyHoliday && $dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
             $statusesForLog[] = 19; // Unauthorized
             return;
         }
@@ -544,6 +622,7 @@ class AttendanceProcessingService
     private function applyIncompleteInOutStatus(
         object $row, string $date, ?object $shift, ?object $first, array &$statusesForLog
     ): void {
+        Log::warning('Debug IncompleteInOutStatus:', ['row'=>$row, 'date'=>$date, 'shift'=>$shift, 'first'=>$first]);
         if ($row->employeeAttendanceTemps->count() !== 1 || !$shift || !$first) {
             return;
         }
@@ -578,22 +657,30 @@ class AttendanceProcessingService
         string $date, ?object $shift, ?object $first, ?object $last,
         ?Collection $leaveApplicationDetails, array &$statusesForLog
     ): bool {
-        if (
+
+        /* if (
             !$first || !$last || !$shift ||
-            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time) &&
-              strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day)) ||
+            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time) && strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day)) ||
             !(strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out))
+        ) */
+
+            //Log::warning('Debug FirstHalfDayStatus:', ['punch_datetime1'=>$first->punch_datetime, 'punch_datetime2'=>$last->punch_datetime, 'end_check_in_time'=>$shift->end_check_in_time, 'second_half_day'=>$shift->second_half_day]);
+
+        if (
+            $first && $last && $shift &&
+            (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time) && strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day . ' +90 minutes')) &&
+            (strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out))
         ) {
+            if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date)) {
+                $statusesForLog[] = 4; // Half-day 1st (Approved)
+            } else {
+                $statusesForLog[] = 3; // Half-day 1st (Unapproved)
+            }
+            $this->isAbsentInFirstHalf = true;
+            return true;
+        }else{
             return false;
         }
-
-        if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date)) {
-            $statusesForLog[] = 4; // Half-day 1st (Approved)
-        } else {
-            $statusesForLog[] = 3; // Half-day 1st (Unapproved)
-        }
-
-        return true;
     }
 
     private function applySecondHalfDayStatus(
@@ -602,7 +689,7 @@ class AttendanceProcessingService
     ): void {
         if (
             $has_halfday_leave || !$first || !$last || !$shift ||
-            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day)) ||
+            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day . ' +90 minutes')) ||
             !(strtotime($last->punch_datetime)  < strtotime($date . ' ' . $shift->clock_out_start_time))
         ) {
             return;
@@ -619,6 +706,7 @@ class AttendanceProcessingService
         string $date, ?object $shift, ?object $first, ?object $last,
         mixed $leave_application_id, array &$statusesForLog
     ): void {
+        Log::warning('Debug BothHalfDayAbsentStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'leave_application_id'=>$leave_application_id]);
         if (!$first || !$last || !$shift || $leave_application_id !== null) {
             return;
         }
@@ -636,9 +724,14 @@ class AttendanceProcessingService
             && $last
             && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day);
 
-        if ($condition1 || $condition2 || $condition3) {
+        $condition4 = (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day) &&  strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->clock_out_start_time))
+            && $last && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out . ' +30 minutes');
+
+        if ($condition1 || $condition2 || $condition3 || $condition4) {
             $statusesForLog[] = 0;  // Absent
             $statusesForLog[] = 15; // Absent (2 half-days)
+            //delete status from $statusesForLog[] if value 2 exist there
+            $statusesForLog = array_values(array_diff($statusesForLog, [2]));
         }
     }
 
@@ -668,9 +761,9 @@ class AttendanceProcessingService
             'transfered_to_ot'                           => $transferedToOTStatus ? 1 : 0,
             'is_holiday'                                 => ($publicHoliday || $empHoliday) ? 1 : 0,
             'is_join'                                    => $isJoin,
-            'is_manual'                                  => 0,
+            'is_manual'                                  => $this->isManual,
             'absent_bridge'                              => 0,
-            'source'                                     => 'biometric',
+            'source'                                     => $this->source,
             'is_corrected'                               => 0,
             'working_hours'                              => $workingHours,
             'employee_applied_attendance_correction_id'  => null,
