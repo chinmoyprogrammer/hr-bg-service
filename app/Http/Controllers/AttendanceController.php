@@ -140,18 +140,18 @@ class AttendanceController extends Controller
         if (!empty($insert_data)) {
             //dd('GGGGGGGG');
             //...Delete all previous data
-            EmployeeAttendanceTemp::truncate();
+            //EmployeeAttendanceTemp::truncate();
             
             //...Insert into temp table
-            EmployeeAttendanceTemp::insert($insert_data);
+            //EmployeeAttendanceTemp::insert($insert_data);
 
             //.... Punch history insert
             // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
-            $columns = ['emp_code', 'punch_datetime'];
+            /* $columns = ['emp_code', 'punch_datetime'];
             $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
-            $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
+            $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns)); */
 
-            $sql = "INSERT INTO employee_attendance_punch_histories (emp_code, punch_datetime) VALUES $values ON DUPLICATE KEY UPDATE $updates";
+            /* $sql = "INSERT INTO employee_attendance_punch_histories (emp_code, punch_datetime) VALUES $values ON DUPLICATE KEY UPDATE $updates";
 
             // Flatten the data for parameter binding
             $bindings = [];
@@ -160,7 +160,7 @@ class AttendanceController extends Controller
                 $bindings[] = $row['punch_datetime'];
             }
 
-            DB::insert($sql, $bindings);
+            DB::insert($sql, $bindings); */
             // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
             //     'inserted' => count($insert_data),
             // ]);
@@ -184,7 +184,7 @@ class AttendanceController extends Controller
 
 
         }else{
-            dd('No data found',$insert_data,$records);
+            //dd('No data found',$insert_data,$records);
         }
 
             
