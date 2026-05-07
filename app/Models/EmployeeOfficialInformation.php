@@ -153,5 +153,11 @@ class EmployeeOfficialInformation extends Model
         return $this->hasOne(EmployeeOtData::class, 'employee_user_id', 'employee_user_id');
     }
 
+    //has pf pf contribution
+    public function hasPfContribution()
+    {
+        return $this->hasOne(EmployeePfContribution::class, 'employee_user_id', 'employee_user_id');
+    }
+
 }
 
