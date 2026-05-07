@@ -534,6 +534,7 @@ class AttendanceProcessingService
         if(!$anyHoliday){
             return;
         }
+        Log::warning('anyHoliday: = >'.$anyHoliday.'<');
         if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0) {
             $statusesForLog[] = $empHoliday ? 20 : 21; // Weekend Duty / Public Holiday Duty
             $statusesForLog[] = 14;                     // Holiday Duty
