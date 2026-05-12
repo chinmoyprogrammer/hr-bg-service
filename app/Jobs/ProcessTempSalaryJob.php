@@ -39,12 +39,17 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $PayrollPreSalarySheetDeduction = [];
         $PayrollSalaryAdvanceLoanNOtherInstallment = [];
         $PayrollSalarySheetHeads = [];
+        $EmployeePfContributionPreparedData = [];
 
 
 
         User::with(
                     [
                         'hasOfficialInformation',
+                        'hasOfficialInformation.employeePfPolicy',
+                        'hasOfficialInformation.hasPfContribution'=>function($query){
+                            $query->whereYear('created_at', date('Y'))->sortBy('created_at','desc');
+                        },
                         'loans' => function($query){
                             $query->where('is_fully_paid', 0);
                             },
@@ -403,6 +408,16 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         'child_data_identifier_key_incoming' => null,
                         'amount' => $pf_amount,
                         'type' => 'pf',
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+
+                    //....prepare data for employee pf contribution table
+                    $EmployeePfContributionPreparedData[] = [
+                        'employee_pf_policy_id' => $user->hasOfficialInformation->employeePfPolicy->id,
+                        'employee_user_id' => $user->id,
+                        'employee_contribution_amount' => $pf_amount,
+                        'employer_contribution_amount' => $pf_amount,
+                        'cumulative_amount' => $pf_amount+$user->hasOfficialInformation->hasPfContribution->first()->cumulative_amount,
                         'created_at' => date('Y-m-d H:i:s'),
                     ];
 
