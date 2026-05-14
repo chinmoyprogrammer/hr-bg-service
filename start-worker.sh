@@ -9,8 +9,24 @@ TRIES="${HR_BG_WORKER_TRIES:-100}"
 TIMEOUT="${HR_BG_WORKER_TIMEOUT:-60}"
 MAX_JOBS="${HR_BG_WORKER_MAX_JOBS:-100}"
 STOP_WHEN_EMPTY="${HR_BG_WORKER_STOP_WHEN_EMPTY:-0}"
+TRIGGER_ENABLED="${HR_BG_TRIGGER_ENABLED:-1}"
+TRIGGER_QUEUES="${HR_BG_TRIGGER_QUEUES:-processTempData_trigger_queue}"
 
 cd /var/www/html
+
+if [ "$TRIGGER_ENABLED" = "1" ] || [ "$TRIGGER_ENABLED" = "true" ]; then
+  (
+    while true; do
+      echo "[trigger] starting: queues=$TRIGGER_QUEUES"
+      set +e
+      php -d opcache.enable_cli=0 artisan rabbitmq:consume-triggers --queues="$TRIGGER_QUEUES" --no-interaction -vvv
+      EXIT_CODE=$?
+      set -e
+      echo "[trigger] exited code=$EXIT_CODE; restarting in 2s..."
+      sleep 2
+    done
+  ) &
+fi
 
 while true; do
   echo "[worker] starting: queues=$QUEUES sleep=$SLEEP tries=$TRIES timeout=$TIMEOUT"
