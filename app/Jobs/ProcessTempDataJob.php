@@ -113,7 +113,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $datetime = \Carbon\Carbon::parse($punchTime);
 
                 $grouped[] = [
-                    'emp_code' => $empCode,
+                    'emp_code' => intval($empCode),
                     'punch_datetime' => $datetime->toDateTimeString(),
                 ];
             }
