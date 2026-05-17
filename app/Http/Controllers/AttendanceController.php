@@ -27,143 +27,143 @@ class AttendanceController extends Controller
         //     ],
         // ]);
         // Device credentials and API endpoint
-        $device_user_name = env('DEVICE_USER_NAME');
-        $device_password = env('DEVICE_PASSWORD');
-        $jwt_api_url = env('JWT_API_URL');
+        // $device_user_name = env('DEVICE_USER_NAME');
+        // $device_password = env('DEVICE_PASSWORD');
+        // $jwt_api_url = env('JWT_API_URL');
 
-        // get token from api (disable SSL verification if needed, no custom handler)
-        $token = Http::timeout(30)
-            ->withOptions([
-                'verify' => false,
-            ])
-            ->post($jwt_api_url, [
-                'username' => $device_user_name,
-                'password' => $device_password
-            ]);
-        // output : { "token": "gP4K......biHUoy" }
+        // // get token from api (disable SSL verification if needed, no custom handler)
+        // $token = Http::timeout(30)
+        //     ->withOptions([
+        //         'verify' => false,
+        //     ])
+        //     ->post($jwt_api_url, [
+        //         'username' => $device_user_name,
+        //         'password' => $device_password
+        //     ]);
+        // // output : { "token": "gP4K......biHUoy" }
 
 
-        // Fetch attendance data from device API
-        $attendanceApiUrl = env('ATTENDANCE_DATA_API_URL');
+        // // Fetch attendance data from device API
+        // $attendanceApiUrl = env('ATTENDANCE_DATA_API_URL');
         $startTime = $request->input('start_time');
         $endTime   = $request->input('end_time');
 
 
-        $payload = [
-            'message' => "HHH",
-            'start_date' => $startTime,
-            'end_date' => $endTime,
-        ];
-        // Increase timeout to 120 seconds and add retry logic to handle transient network issues
-        $attendance_data = Http::timeout(120)
-            ->retry(3, 5000) // 3 retries, 5 second delay between retries
-            ->withHeaders([
-                'Content-Type'  => 'application/json',
-                'Authorization' => 'JWT ' . $token->json('token')
-            ])
-            ->get($attendanceApiUrl, [
-                'start_time' => $startTime,
-                'end_time'   => date('Y-m-d', strtotime($startTime . ' +1 day')),
-                'page'       => 1,
-                'page_size'  => 50000,
-                'departments' => 1,
-                'areas' => [2,3],
-            ]);
+        // $payload = [
+        //     'message' => "HHH",
+        //     'start_date' => $startTime,
+        //     'end_date' => $endTime,
+        // ];
+        // // Increase timeout to 120 seconds and add retry logic to handle transient network issues
+        // $attendance_data = Http::timeout(120)
+        //     ->retry(3, 5000) // 3 retries, 5 second delay between retries
+        //     ->withHeaders([
+        //         'Content-Type'  => 'application/json',
+        //         'Authorization' => 'JWT ' . $token->json('token')
+        //     ])
+        //     ->get($attendanceApiUrl, [
+        //         'start_time' => $startTime,
+        //         'end_time'   => date('Y-m-d', strtotime($startTime . ' +1 day')),
+        //         'page'       => 1,
+        //         'page_size'  => 50000,
+        //         'departments' => 1,
+        //         'areas' => [2,3],
+        //     ]);
 
-        /*
-            sample : output of $attendance_data ->
-                {
-                "count": 1027,
-                "next": null,
-                "previous": null,
-                "msg": "",
-                "code": 0,
-                "data": [
-                    {
-                    "id": 474078,
-                    "emp_code": "0005",
-                    "first_name": "Md. Rajaul Karim",
-                    "last_name": null,
-                    "nick_name": "",
-                    "gender": "Male",
-                    "dept_code": "1",
-                    "dept_name": "Department",
-                    "position_code": null,
-                    "position_name": null,
-                    "work_code": "0",
-                    "att_date": "2025-11-19",
-                    "work_code_alias": "0",
-                    "punch_time": "08:49",
-                    "punch_state": "Check In",
-                    "verify_type": "Face",
-                    "source": "Device"
-                    },
-                    ....
-                    ]
+        // /*
+        //     sample : output of $attendance_data ->
+        //         {
+        //         "count": 1027,
+        //         "next": null,
+        //         "previous": null,
+        //         "msg": "",
+        //         "code": 0,
+        //         "data": [
+        //             {
+        //             "id": 474078,
+        //             "emp_code": "0005",
+        //             "first_name": "Md. Rajaul Karim",
+        //             "last_name": null,
+        //             "nick_name": "",
+        //             "gender": "Male",
+        //             "dept_code": "1",
+        //             "dept_name": "Department",
+        //             "position_code": null,
+        //             "position_name": null,
+        //             "work_code": "0",
+        //             "att_date": "2025-11-19",
+        //             "work_code_alias": "0",
+        //             "punch_time": "08:49",
+        //             "punch_state": "Check In",
+        //             "verify_type": "Face",
+        //             "source": "Device"
+        //             },
+        //             ....
+        //             ]
 
-        */
+        // */
 
-        // Return list of attendances
-        //return $attendance_data->json();
+        // // Return list of attendances
+        // //return $attendance_data->json();
 
-        //insert data to temp table
-        $responseJson = $attendance_data->json();
+        // //insert data to temp table
+        // $responseJson = $attendance_data->json();
 
-        $records = [];
-        if (is_array($responseJson)) {
-            $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
-        }
-        //dd($records);
-        $grouped = [];
-        foreach ($records as $record) {
-            // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
-            if (!isset($record['emp_code'], $record['punch_time'])) {
-                continue;
-            }
-            $empCode = $record['emp_code'];
-            // combine date + time to build proper datetime for temp table
-            //$attDate = trim($record['att_date']);
-            $punchTime = trim($record['punch_time']);
-            // Use att_date + punch_time to avoid defaulting to today
-            $datetime = \Carbon\Carbon::parse($punchTime);
+        // $records = [];
+        // if (is_array($responseJson)) {
+        //     $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
+        // }
+        // //dd($records);
+        // $grouped = [];
+        // foreach ($records as $record) {
+        //     // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
+        //     if (!isset($record['emp_code'], $record['punch_time'])) {
+        //         continue;
+        //     }
+        //     $empCode = $record['emp_code'];
+        //     // combine date + time to build proper datetime for temp table
+        //     //$attDate = trim($record['att_date']);
+        //     $punchTime = trim($record['punch_time']);
+        //     // Use att_date + punch_time to avoid defaulting to today
+        //     $datetime = \Carbon\Carbon::parse($punchTime);
 
-            $grouped[] = [
-                'emp_code' => $empCode,
-                'punch_datetime' => $datetime->toDateTimeString(),
-            ];
-        }
-        // Prepare bulk insert data for temp table
-        $insert_data = array_values($grouped);
-        // Log::info('pullRawDataFromDeviceToTempTable: records fetched', [
-        //     'count' => is_array($records) ? count($records) : 0,
-        // ]);
-        if (!empty($insert_data)) {
-            //dd('GGGGGGGG');
-            //...Delete all previous data
-            EmployeeAttendanceTemp::truncate();
+        //     $grouped[] = [
+        //         'emp_code' => $empCode,
+        //         'punch_datetime' => $datetime->toDateTimeString(),
+        //     ];
+        // }
+        // // Prepare bulk insert data for temp table
+        // $insert_data = array_values($grouped);
+        // // Log::info('pullRawDataFromDeviceToTempTable: records fetched', [
+        // //     'count' => is_array($records) ? count($records) : 0,
+        // // ]);
+        // if (!empty($insert_data)) {
+        //     //dd('GGGGGGGG');
+        //     //...Delete all previous data
+        //     EmployeeAttendanceTemp::truncate();
             
-            //...Insert into temp table
-            EmployeeAttendanceTemp::insert($insert_data);
+        //     //...Insert into temp table
+        //     EmployeeAttendanceTemp::insert($insert_data);
 
-            //.... Punch history insert
-            // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
-            $columns = ['emp_code', 'punch_datetime'];
-            $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
-            $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
+        //     //.... Punch history insert
+        //     // Build a single INSERT ... ON DUPLICATE KEY UPDATE statement so duplicates are silently skipped
+        //     $columns = ['emp_code', 'punch_datetime'];
+        //     $values  = implode(',', array_fill(0, count($insert_data), '(' . implode(',', array_fill(0, count($columns), '?')) . ')'));
+        //     $updates = implode(',', array_map(fn($c) => "$c = VALUES($c)", $columns));
 
-            $sql = "INSERT INTO employee_attendance_punch_histories (emp_code, punch_datetime) VALUES $values ON DUPLICATE KEY UPDATE $updates";
+        //     $sql = "INSERT INTO employee_attendance_punch_histories (emp_code, punch_datetime) VALUES $values ON DUPLICATE KEY UPDATE $updates";
 
-            // Flatten the data for parameter binding
-            $bindings = [];
-            foreach ($insert_data as $row) {
-                $bindings[] = $row['emp_code'];
-                $bindings[] = $row['punch_datetime'];
-            }
+        //     // Flatten the data for parameter binding
+        //     $bindings = [];
+        //     foreach ($insert_data as $row) {
+        //         $bindings[] = $row['emp_code'];
+        //         $bindings[] = $row['punch_datetime'];
+        //     }
 
-            DB::insert($sql, $bindings);
-            // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
-            //     'inserted' => count($insert_data),
-            // ]);
+        //     DB::insert($sql, $bindings);
+        //     // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
+        //     //     'inserted' => count($insert_data),
+        //     // ]);
             
 
         $payload = [
@@ -183,9 +183,9 @@ class AttendanceController extends Controller
         // ]);            
 
 
-        }else{
-            dd('No data found',$insert_data,$records);
-        }
+        // }else{
+        //     dd('No data found',$insert_data,$records);
+        // }
 
             
 
