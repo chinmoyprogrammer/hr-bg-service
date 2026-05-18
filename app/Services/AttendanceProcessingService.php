@@ -452,9 +452,8 @@ class AttendanceProcessingService
 
         //Log::warning('graceEnd:', ['shift'=>$shift,'date'=>$date,'graceEnd'=>$graceEnd, 'checkInStart'=>$checkInStart, 'punchTime'=>$punchTime, 'secondHalfStart'=>$secondHalfStart]);
 
-        if ($punchTime <= $graceEnd && $punchTime >= $checkInStart) {
+        if ($punchTime > 0) {
             $statusesForLog[] = 1; // Present
-            return;
         }
 
         if ($punchTime > $graceEnd) {
