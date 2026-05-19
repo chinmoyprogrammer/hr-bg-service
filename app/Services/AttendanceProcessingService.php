@@ -730,7 +730,7 @@ class AttendanceProcessingService
             $statusesForLog[] = 0;  // Absent
             $statusesForLog[] = 15; // Absent (2 half-days)
             //delete status from $statusesForLog[] if value 2 exist there
-            $statusesForLog = array_values(array_diff($statusesForLog, [2]));
+            $statusesForLog = array_values(array_diff($statusesForLog, [2,1]));
         }
     }
 
