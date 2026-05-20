@@ -6,6 +6,7 @@ use App\Jobs\InsertWeekendHolidaysJob;
 use App\Jobs\ProcessRealSalaryJob;
 use App\Jobs\ProcessTempDataJob;
 use App\Jobs\ProcessTempSalaryJob;
+use App\Jobs\RecalculateAttendanceJob;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -59,6 +60,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                 }
                 if ($targetQueue === 'processRealSalary_queue') {
                     (new ProcessRealSalaryJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
+                if ($targetQueue === 'recalculateAttendance_queue') {
+                    (new RecalculateAttendanceJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
                 Log::info('RabbitMQJob skipped re-publish due to same queue', ['queue' => $targetQueue, 'payload' => $this->data]);
