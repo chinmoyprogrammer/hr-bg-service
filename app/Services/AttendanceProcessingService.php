@@ -21,6 +21,7 @@ class AttendanceProcessingService
     private bool $isManual;
     private string $source;
     private bool $isAbsentInFirstHalf;
+    private ?int $leave_application_id;
 
     public function __construct()
     {
@@ -83,7 +84,6 @@ class AttendanceProcessingService
         ];
 
         $statusesForLog     = [];
-        $leave_application_id = null;
         $has_halfday_leave  = false;
 
         // ── Determine whether employee has an approved OT requisition on this date ──
@@ -105,9 +105,12 @@ class AttendanceProcessingService
             );
 
             Log::warning('Debug Status Logs:', ['statusesForLog'=>$statusesForLog]);
+            
+            Log::warning('leave_application_id:', ['leave_application_id'=>$this->leave_application_id]);
+
 
             $result['statusLogs'] = $this->buildStatusLogRows(
-                $row->employee_user_id, $leave_application_id, $date, $now, $statusesForLog
+                $row->employee_user_id, $date, $now, $statusesForLog
             );
             // Still build a bare attendance row so the date is recorded
             $result['attendance'] = $this->buildAttendanceRow(
@@ -169,7 +172,7 @@ class AttendanceProcessingService
         );
 
         $this->applyBothHalfDayAbsentStatus(
-            $date, $shift, $first, $last, $leave_application_id, $statusesForLog
+            $date, $shift, $first, $last, $statusesForLog
         );
 
         // ── OT calculation ────
@@ -188,7 +191,7 @@ class AttendanceProcessingService
             $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours
         );
         $result['statusLogs'] = $this->buildStatusLogRows(
-            $row->employee_user_id, $leave_application_id, $date, $now, $statusesForLog
+            $row->employee_user_id, $date, $now, $statusesForLog
         );
 
         return $result;
@@ -273,7 +276,8 @@ class AttendanceProcessingService
         ?object     $empHoliday
     ): array {
         if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 8)->contains('leave_date', $date)) {
-            return [8]; // Full-day approved leave
+            $this->leave_application_id = $leaveApplicationDetails->where('first_second_half', 8)->where('leave_date', $date)->first()->leave_application_id;
+            return [8];// Full-day approved leave
         }
 
         if ($publicHoliday) {
@@ -671,6 +675,7 @@ class AttendanceProcessingService
             (strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out))
         ) {
             if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date)) {
+                $this->leave_application_id = $leaveApplicationDetails->where('first_second_half', 4)->where('leave_date', $date)->first()->leave_application_id;
                 $statusesForLog[] = 4; // Half-day 1st (Approved)
             } else {
                 $statusesForLog[] = 3; // Half-day 1st (Unapproved)
@@ -695,6 +700,7 @@ class AttendanceProcessingService
         }
 
         if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 6)->contains('leave_date', $date)) {
+            $this->leave_application_id = $leaveApplicationDetails->where('first_second_half', 6)->where('leave_date', $date)->first()->leave_application_id;
             $statusesForLog[] = 6; // Half-day 2nd (Approved)
         } else {
             $statusesForLog[] = 5; // Half-day 2nd (Unapproved)
@@ -703,10 +709,10 @@ class AttendanceProcessingService
 
     private function applyBothHalfDayAbsentStatus(
         string $date, ?object $shift, ?object $first, ?object $last,
-        mixed $leave_application_id, array &$statusesForLog
+        array &$statusesForLog
     ): void {
-        Log::warning('Debug BothHalfDayAbsentStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'leave_application_id'=>$leave_application_id]);
-        if (!$first || !$last || !$shift || $leave_application_id !== null) {
+        Log::warning('Debug BothHalfDayAbsentStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'leave_application_id'=>$this->leave_application_id]);
+        if (!$first || !$last || !$shift) {
             return;
         }
 
@@ -774,7 +780,7 @@ class AttendanceProcessingService
     }
 
     private function buildStatusLogRows(
-        int $employeeUserId, mixed $leave_application_id,
+        int $employeeUserId,
         string $date, string $now, array $statuses
     ): array {
         $rows = [];
@@ -782,7 +788,7 @@ class AttendanceProcessingService
             $rows[] = [
                 'employee_user_id'       => $employeeUserId,
                 'employee_attendance_id' => null, // filled by the job after bulk insert
-                'leave_application_id'   => $leave_application_id,
+                'leave_application_id'   => $this->leave_application_id,
                 'attendance_status'      => $status,
                 'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
