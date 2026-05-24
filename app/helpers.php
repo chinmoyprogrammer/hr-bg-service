@@ -111,3 +111,38 @@ if (!function_exists('calculateOtHours'))
             }
     }
 }
+
+
+if (!function_exists('sendSms'))
+{
+    function sendSMS($countryCode, $receipentNos, $smsBody)
+    {
+
+
+            if ($countryCode === '+880')
+            {
+                $countryCode = str_replace('+', '', $countryCode);
+                $last10 = substr($receipentNos, -10);
+            } else {
+                $last10 = $receipentNos;
+            }
+
+            $phoneNumber = $countryCode . $last10;
+
+
+
+            $data = array('token' => 'multibrand', 'receipentNo' => $phoneNumber, 'smsContent' => $smsBody, 'hostname' => env('SMS_HOSTNAME','mbw-chinmoy-pc'));
+
+            $URL='182.163.102.203:8086/sms_api/send_sms.php';
+
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL,$URL);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30); //timeout after 30 seconds
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
+            $result=curl_exec ($ch);
+            curl_close($ch);
+            return $result;
+    }
+}
