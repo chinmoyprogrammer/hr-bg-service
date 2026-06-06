@@ -3,7 +3,7 @@ set -e
 
 # Configurable via environment; sensible defaults provided
 
-QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,processManualData_queue,insertWeekendHolidays_queue,processTempSalary_queue,processRealSalary_queue,recalculateAttendance_queue,employeeDeactivation_queue}"
+QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,processManualData_queue,insertWeekendHolidays_queue,processTempSalary_queue,processRealSalary_queue,recalculateAttendance_queue,employeeDeactivation_queue,createDeviceUserByEmpCode_queue}"
 SLEEP="${HR_BG_WORKER_SLEEP:-1}"
 TRIES="${HR_BG_WORKER_TRIES:-100}"
 TIMEOUT="${HR_BG_WORKER_TIMEOUT:-60}"
