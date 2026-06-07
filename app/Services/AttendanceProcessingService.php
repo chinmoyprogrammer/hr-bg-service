@@ -104,9 +104,9 @@ class AttendanceProcessingService
                 $date, $leaveApplicationDetails, $publicHoliday, $empHoliday
             );
 
-            Log::warning('Debug Status Logs:', ['statusesForLog'=>$statusesForLog]);
+            //Log::warning('Debug Status Logs:', ['statusesForLog'=>$statusesForLog]);
             
-            Log::warning('leave_application_id:', ['leave_application_id'=>$this->leave_application_id]);
+            //Log::warning('leave_application_id:', ['leave_application_id'=>$this->leave_application_id]);
 
 
             $result['statusLogs'] = $this->buildStatusLogRows(
@@ -117,7 +117,7 @@ class AttendanceProcessingService
                 $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
             );
             $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
-            Log::warning('Debug attendance:', ['attendance'=>$result['attendance']]);
+            //Log::warning('Debug attendance:', ['attendance'=>$result['attendance']]);
             return $result;
         }
 
@@ -711,7 +711,7 @@ class AttendanceProcessingService
         string $date, ?object $shift, ?object $first, ?object $last,
         array &$statusesForLog
     ): void {
-        Log::warning('Debug BothHalfDayAbsentStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'leave_application_id'=>$this->leave_application_id]);
+        //Log::warning('Debug BothHalfDayAbsentStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'leave_application_id'=>$this->leave_application_id]);
         if (!$first || !$last || !$shift) {
             return;
         }
@@ -788,7 +788,7 @@ class AttendanceProcessingService
             $rows[] = [
                 'employee_user_id'       => $employeeUserId,
                 'employee_attendance_id' => null, // filled by the job after bulk insert
-                'leave_application_id'   => $this->leave_application_id,
+                'leave_application_id'   => $this->leave_application_id ?? null,
                 'attendance_status'      => $status,
                 'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
