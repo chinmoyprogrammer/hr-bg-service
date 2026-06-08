@@ -180,4 +180,9 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
     {
         return $this->hasMany(PayrollSalaryAdvanceNLoan::class, 'employee_user_id', 'id')->where('type', 'loan');
     }
+
+    public function hasWeekendDays()
+    {
+        return $this->hasMany(EmployeeWeekendDay::class, 'employee_user_id', 'id');
+    }
 }

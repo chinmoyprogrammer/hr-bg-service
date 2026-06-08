@@ -3,9 +3,11 @@
 namespace App\Console\Commands;
 
 use App\Jobs\ProcessTempDataJob;
+use App\Jobs\EmployeeDeactivation;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
+use Str;
 
 class ConsumeTriggerQueues extends Command
 {
@@ -90,16 +92,61 @@ class ConsumeTriggerQueues extends Command
 
     private function dispatchFromTriggerQueue(string $queueName, array $payload): void
     {
-        if ($queueName === 'processTempData_trigger_queue') {
-            dispatch((new ProcessTempDataJob($payload))
-                ->onQueue('processTempData_queue')
-                ->onConnection('rabbitmq'));
+        $suffix = '_trigger_queue';
+        if (!\Illuminate\Support\Str::endsWith($queueName, $suffix)) {
+            Log::warning('No trigger handler registered for queue', [
+                'queue' => $queueName,
+                'payload' => $payload,
+            ]);
             return;
         }
 
-        Log::warning('No trigger handler registered for queue', [
-            'queue' => $queueName,
-            'payload' => $payload,
-        ]);
+        $jobMapJson = (string) env('HR_BG_TRIGGER_JOB_MAP', '');
+        $jobMap = [];
+        if ($jobMapJson !== '') {
+            try {
+                $decoded = json_decode($jobMapJson, true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    $jobMap = $decoded;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Invalid HR_BG_TRIGGER_JOB_MAP JSON', ['error' => $e->getMessage()]);
+            }
+        }
+
+        $baseName = substr($queueName, 0, -strlen($suffix));
+        $targetQueue = $baseName . '_queue';
+
+        $studlyBaseName = \Illuminate\Support\Str::studly($baseName);
+        $jobClass = $jobMap[$queueName] ?? null;
+
+        if (!is_string($jobClass) || !class_exists($jobClass)) {
+            $jobClass = 'App\\Jobs\\' . $studlyBaseName . 'Job';
+            if (!class_exists($jobClass)) {
+                $jobClass = 'App\\Jobs\\' . $studlyBaseName;
+            }
+        }
+
+        if (!class_exists($jobClass)) {
+            Log::warning('No trigger handler registered for queue', [
+                'queue' => $queueName,
+                'payload' => $payload,
+                'resolved_job' => $jobClass,
+            ]);
+            return;
+        }
+
+        try {
+            $job = new $jobClass($payload);
+        } catch (\Throwable $e) {
+            Log::error('Trigger handler resolved but could not be instantiated', [
+                'queue' => $queueName,
+                'resolved_job' => $jobClass,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+
+        dispatch($job->onQueue($targetQueue)->onConnection('rabbitmq'));
     }
 }
