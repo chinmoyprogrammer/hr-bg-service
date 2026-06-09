@@ -10,7 +10,7 @@ TIMEOUT="${HR_BG_WORKER_TIMEOUT:-60}"
 MAX_JOBS="${HR_BG_WORKER_MAX_JOBS:-100}"
 STOP_WHEN_EMPTY="${HR_BG_WORKER_STOP_WHEN_EMPTY:-0}"
 TRIGGER_ENABLED="${HR_BG_TRIGGER_ENABLED:-1}"
-TRIGGER_QUEUES="${HR_BG_TRIGGER_QUEUES:-processTempData_trigger_queue,employeeDeactivation_trigger_queue}"
+TRIGGER_QUEUES="${HR_BG_TRIGGER_QUEUES:-processTempData_trigger_queue,employeeDeactivation_trigger_queue,insertWeekendHolidays_trigger_queue}"
 
 cd /var/www/html
 

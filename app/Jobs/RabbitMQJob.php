@@ -53,7 +53,7 @@ class RabbitMQJob extends Job implements ShouldQueue
                 if ($targetQueue === 'processTempData_queue') {
                     (new ProcessTempDataJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
-                }
+                } 
                 if ($targetQueue === 'insertWeekendHolidays_queue') {
                     (new InsertWeekendHolidaysJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;

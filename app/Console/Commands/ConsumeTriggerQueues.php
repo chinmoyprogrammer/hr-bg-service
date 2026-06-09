@@ -92,6 +92,7 @@ class ConsumeTriggerQueues extends Command
 
     private function dispatchFromTriggerQueue(string $queueName, array $payload): void
     {
+        Log::info('Consuming trigger message', ['queue' => $queueName, 'payload' => $payload]);
         $suffix = '_trigger_queue';
         if (!\Illuminate\Support\Str::endsWith($queueName, $suffix)) {
             Log::warning('No trigger handler registered for queue', [
