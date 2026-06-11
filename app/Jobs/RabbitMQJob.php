@@ -70,6 +70,15 @@ class RabbitMQJob extends Job implements ShouldQueue
                     (new CreateDeviceUserByEmpCode(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
+                if ($targetQueue === 'processManualData_queue') {
+                    (new ProcessManualDataJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                                       return;
+                }
+                if ($targetQueue === 'recalculateSelectedAttendanceData_queue') {
+                    (new RecalculateSelectedAttendanceDataJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
+
                 Log::info('RabbitMQJob skipped re-publish due to same queue', ['queue' => $targetQueue, 'payload' => $this->data]);
                 return;
             }

@@ -13,6 +13,7 @@ use App\Models\HolidayDutyRequisition;
 use App\Models\LeaveApplicationDetail;
 use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\Shift;
+use App\Services\AttendanceDeviceDataPullService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -20,78 +21,63 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class ProcessManualDataJob extends Job implements ShouldQueue
+class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
 {
     use InteractsWithQueue, Queueable, SerializesModels;
     protected array $payload;
+    protected array $dates;
+    protected array $employeeUserIds;
 
     /**
      * $payload = [
-     *   ['employee_user_id' => 170, 'date' => '2026-05-01', 'in_time' => '09:05:00', 'out_time' => '18:25:00'],
-     *   ['employee_user_id' => 171, 'date' => '2026-04-10', 'in_time' => '09:05:00', 'out_time' => '18:15:00'],
+     * "dates" => ['2026-05-01', '2026-05-02'],
+     * "employee_user_ids" => [1, 2, 3],
      * ]
      */
     public function __construct(array $payload)
     {
         $this->payload    = $payload;
+        $this->dates = $payload['dates'] ?? [];
+        $this->employeeUserIds = $payload['employee_user_ids'] ?? [];
         $this->connection = 'rabbitmq';
-        $this->queue      = 'processManualData_queue';
+        $this->queue      = 'recalculateSelectedAttendanceData_queue';
     }
 
     public function handle(): void
     {
-        Log::warning('ProcessManualDataJob:', ['payload' => $this->payload]);
+        Log::warning('RecalculateSelectedAttendanceDataJob:', ['payload' => $this->payload]);
         if (empty($this->payload)) {
-            Log::warning('ProcessManualDataJob: empty payload');
+            Log::warning('RecalculateSelectedAttendanceDataJob: empty payload');
             return;
         }
 
-        /* Log::warning('Manual Post:', ['test'=>$this->payload]);
-        return; */
-        // ── Normalise & validate each row ─────────────────────────────────────
-        $validRows = [];
-        foreach ($this->payload as $item) {
-            if (empty($item['employee_user_id']) || empty($item['date'])) {
-                Log::warning('ProcessManualDataJob: skipping row with missing employee_user_id or date', ['row' => $item]);
-                continue;
-            }
-            $validRows[] = [
-                'employee_user_id' => (int) $item['employee_user_id'],
-                'date'             => $item['date'],
-                'in_time'          => $item['in_time']  ?? null,
-                'out_time'         => $item['out_time'] ?? null,
-            ];
+
+        //..... Pull attendance device data
+        if($this->payload['pullDeviceData'] == 1)
+        {
+            $attendanceDeviceDataPullService = new AttendanceDeviceDataPullService();
+            $attendanceDeviceDataPullService->process($this->dates);
         }
 
-        if (empty($validRows)) {
-            Log::warning('ProcessManualDataJob: no valid rows after validation');
+                    
+        $validRows = $this->payload['dates'] ?? [];
+        if (empty($validRows)) 
+        {
+            Log::warning('RecalculateSelectedAttendanceDataJob: no valid rows after validation');
             return;
         }
 
-        // ── Derive lookup boundaries from the submitted rows ──────────────────
-        $empUserIds  = array_unique(array_column($validRows, 'employee_user_id'));
-        $dates       = array_unique(array_column($validRows, 'date'));
-        sort($dates);
-        //Log::warning('dates:', [$dates]);
-
-        $startDate     = $dates[0];
-        $endDate       = $dates[count($dates) - 1];
-        $startBoundary = \Carbon\Carbon::parse($startDate)->startOfDay()->toDateString();
-        $endBoundary   = \Carbon\Carbon::parse($endDate)->endOfDay()->toDateString();
-        $jobStart      = date('Y-m-d H:i:s');
         $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
 
-        // ── Build a quick lookup: [employee_user_id|date => row] ──────────────
-        // Used later to pass in_time / out_time into the service as "manual punch"
-        $manualPunchMap = [];
-        foreach ($validRows as $r) {
-            $manualPunchMap[$r['employee_user_id'] . '|' . $r['date']] = $r;
-        }
+        $startBoundary = $this->dates[0];
+        $endBoundary   = $this->dates[count($this->dates) - 1];
 
-        Log::warning('manual punch map:', ['manualPunchMap'=>$manualPunchMap]);
 
         // ── Pre-load shared look-up data (same pattern as ProcessTempDataJob) ─
         $officialInfos = EmployeeOfficialInformation::with([
+            'employeeAttendanceTemps' => fn($q) => $q
+                ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $endBoundary])
+                ->orderBy('punch_datetime'),
             'employeeOtPolicy'       => fn($q) => $q
                 ->where('effective_date', '<=', $startBoundary)->where('status', 1),
             'hasLeavePolicyDetail',
@@ -104,46 +90,48 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 ])
                 ->where('attendance_status', 2)
         ])
-        ->whereIn('employee_user_id', $empUserIds)
+        ->when(
+                !empty($this->employeeUserIds), 
+                fn($q) => $q->whereIn('employee_user_id', $this->employeeUserIds)
+            )
         ->get();
-
-        $shifts = Shift::where('effective_date', '<=', $startDate)
+        $shifts = Shift::where('effective_date', '<=', $startBoundary)
             ->orderBy('effective_date', 'desc')
             ->get()
             ->keyBy('id');
 
-        $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $empUserIds)
-            ->whereBetween('leave_date', [$startDate, $endDate])
+        $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $this->employeeUserIds)
+            ->whereBetween('leave_date', [$startBoundary, $endBoundary])
             ->get()
             ->groupBy('employee_user_id');
 
-        $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
+        $publicHolidays = Holiday::whereBetween('date', [$startBoundary, $endBoundary])
             ->whereNull('employee_user_id')
             ->get()
             ->keyBy('date');
 
-        $employeeHolidaysByEmp = Holiday::whereIn('employee_user_id', $empUserIds)
-            ->whereBetween('date', [$startDate, $endDate])
+        $employeeHolidaysByEmp = Holiday::whereIn('employee_user_id', $this->employeeUserIds)
+            ->whereBetween('date', [$startBoundary, $endBoundary])
             ->get()
             ->groupBy('employee_user_id')
             ->map(fn($c) => $c->keyBy('date'));
 
-        $holidayDutyRequisitions = HolidayDutyRequisition::whereBetween('duty_date', [$startDate, $endDate])
+        $holidayDutyRequisitions = HolidayDutyRequisition::whereBetween('duty_date', [$startBoundary, $endBoundary])
             ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
             ->where('holiday_duty_requisitions.status', 'Approved')
             ->whereNotNull('holiday_duty_requisitions.approved_at')
             ->get();
 
-        $otRequisitions = EmployeeOtRequisition::whereIn('employee_user_id', $empUserIds)
-            ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$startDate])
-            ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$endDate])
+        $otRequisitions = EmployeeOtRequisition::whereIn('employee_user_id', $this->employeeUserIds)
+            ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$startBoundary])
+            ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$endBoundary])
             ->whereNotNull('approval_date')
             ->get()
             ->keyBy('employee_user_id');
 
         // ── Delete existing attendance records for the submitted emp × date pairs
-        $attRecordIds = EmployeeAttendance::whereIn('employee_user_id', $empUserIds)
-            ->whereIn('date', $dates)
+        $attRecordIds = EmployeeAttendance::whereIn('employee_user_id', $this->employeeUserIds)    
+            ->whereIn('date', $this->dates)
             ->pluck('id');
 
         if ($attRecordIds->isNotEmpty()) {
@@ -178,17 +166,14 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             $otRequisition   = $otRequisitions->get($row->employee_user_id);
 
             // Only process dates that were submitted for this employee
-            $empDates = array_filter(
-                $dates,
-                fn($d) => isset($manualPunchMap[$row->employee_user_id . '|' . $d])
-            );
+            $empDates = $this->dates;
 
             foreach ($empDates as $date) {
-                $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
                 $shiftId       = $row->shift_id ?? Shift::find(1)->id;
                 $shift         = $shifts->get($shiftId);
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
+                
 
                 //Log::warning('manual:', ['manualPunch'=>$manualPunch]);
 
@@ -199,9 +184,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $publicHoliday,
                     $empHoliday,
                     $holidayDutyRequisitions,
-                    $otRequisition,
-                    $empLeaveDetails,
-                    $manualPunch
+                    $otRequisition, 
+                    $empLeaveDetails
                 );
 
                 if ($result['skip']) {
@@ -262,7 +246,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         $idMapByEmpDate = [];
 
         $insertedRows = EmployeeAttendance::where('created_user_id', $systemUserId)
-            ->whereBetween('created_at', [$jobStart, $jobEnd])
+            ->whereBetween('created_at', [date('Y-m-d 00:00:00'), date('Y-m-d 23:59:59')])
             ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_time', 'created_at', 'emp_code']);
 
         foreach ($insertedRows as $r) {
