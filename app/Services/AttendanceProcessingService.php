@@ -141,8 +141,9 @@ class AttendanceProcessingService
         // ── Shift defaults ────────────────────────────────────────────────────────
         $shiftStart = $shift->clock_in      ?? '09:00:00';
         $shiftEnd   = $shift->clock_out     ?? '18:00:00';
-        $graceParts = explode(':', $shift->shift_grace_time ?? '00:00:00');
-        $grace = ($graceParts[0] * 60) + $graceParts[1];
+        //$graceParts = explode(':', $shift->shift_grace_time ?? '00:00:00');
+        // $grace = ($graceParts[0] * 60) + $graceParts[1];
+        $grace = $shift->shift_grace_time;
         $workingHours = $this->calculateWorkingHours($first, $last, $shift);
         $inTime  = $first ? Carbon::parse($first->punch_datetime)->format('H:i:s') : null;
         $outTime = $last  ? Carbon::parse($last->punch_datetime)->format('H:i:s')  : null;
@@ -438,7 +439,7 @@ class AttendanceProcessingService
 
     private function applyPresentOrLateStatus(
         object $row, string $date, ?object $shift, ?object $first,
-        string $shiftStart, int $grace, string $now, array &$statusesForLog
+        string $shiftStart, $grace, string $now, array &$statusesForLog
     ): void {
         if (!$first || !$shift) {
             return;
