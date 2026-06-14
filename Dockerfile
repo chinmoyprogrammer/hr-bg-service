@@ -91,4 +91,4 @@ php_admin_value[date.timezone] = UTC" > /usr/local/etc/php-fpm.d/www.conf
 #     /usr/local/bin/start-worker.sh & \
 #     /usr/local/bin/sync-reload.sh & \
 #     nginx -g 'daemon off;'"
-CMD ["sh", "-c", "mkdir -p /var/run/php-fpm && chown -R www-data:www-data /var/www/html && chmod -R 755 /var/www/html && php-fpm -D && /usr/local/bin/start-worker.sh & /usr/local/bin/sync-reload.sh & nginx -g 'daemon off;'"]
+CMD ["sh", "-c", "mkdir -p /var/run/php-fpm && mkdir -p /var/www/html/storage/logs /var/www/html/storage/framework /var/www/html/bootstrap/cache && chown -R www-data:www-data /var/www/html /var/run/php-fpm && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache || true && php-fpm -D && /usr/local/bin/start-worker.sh & /usr/local/bin/sync-reload.sh & nginx -g 'daemon off;'"]

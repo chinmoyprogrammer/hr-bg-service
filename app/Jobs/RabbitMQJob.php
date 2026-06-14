@@ -7,6 +7,7 @@ use App\Jobs\ProcessRealSalaryJob;
 use App\Jobs\ProcessTempDataJob;
 use App\Jobs\ProcessTempSalaryJob;
 use App\Jobs\RecalculateAttendanceJob;
+use App\Jobs\ConfirmProvisionalEmployeesJob;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -53,7 +54,7 @@ class RabbitMQJob extends Job implements ShouldQueue
                 if ($targetQueue === 'processTempData_queue') {
                     (new ProcessTempDataJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
-                }
+                } 
                 if ($targetQueue === 'insertWeekendHolidays_queue') {
                     (new InsertWeekendHolidaysJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
@@ -68,6 +69,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                 }
                 if ($targetQueue === 'createDeviceUserByEmpCode_queue') {
                     (new CreateDeviceUserByEmpCode(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
+                if ($targetQueue === 'confirmProvisionalEmployees_queue') {
+                    (new ConfirmProvisionalEmployeesJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
                 if ($targetQueue === 'processManualData_queue') {

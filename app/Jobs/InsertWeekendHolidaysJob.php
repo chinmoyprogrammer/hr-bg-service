@@ -39,6 +39,7 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
          *   'employee_user_ids' => [101, 102] // optional
          * ]
          */
+        //Log::info('InsertWeekendHolidaysJob started', ['payload' => $this->payload]);
         $year = (int) ($this->payload['year'] ?? (int) date('Y'));
         $weekendHolidayTypeId = (int) ($this->payload['holiday_type_id'] ?? 8);
         $employeeIds = $this->payload['employee_user_ids'] ?? null;
