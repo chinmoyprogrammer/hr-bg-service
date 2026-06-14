@@ -146,3 +146,36 @@ if (!function_exists('sendSms'))
             return $result;
     }
 }
+
+if (!function_exists('getUserId'))
+{
+    function getUserId()
+    {
+        $defaultId = (int) env('SYSTEM_USER_ID', 195);
+        try {
+            if (app()->bound('x_user_id')) {
+                $id = app('x_user_id');
+                return is_numeric($id) ? (int) $id : $id;
+            }
+        } catch (\Throwable $e) {
+            return $defaultId;
+        }
+        try {
+            $req = app('request');
+            $h = $req ? $req->header('X-User-Id') : null;
+            if ($h !== null && $h !== '') {
+                return is_numeric($h) ? (int) $h : $h;
+            }
+        } catch (\Throwable $e) {
+            return $defaultId;
+        }
+        try {
+            if (function_exists('auth') && auth() && auth()->id()) {
+                return (int) auth()->id();
+            }
+        } catch (\Throwable $e) {
+            return $defaultId;
+        }
+        return $defaultId;
+    }
+}
