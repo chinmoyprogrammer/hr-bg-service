@@ -40,6 +40,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $PayrollSalaryAdvanceLoanNOtherInstallment = [];
         $PayrollSalarySheetHeads = [];
         $EmployeePfContributionPreparedData = [];
+        $payrollAccruedAllowanceIncomeData = [];
 
 
 
@@ -78,7 +79,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             ->where('is_draft', 0)
             ->where('deleted_by', null)
             ->lazy()
-            ->each(function ($user) use(&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeads, $payload)
+            ->each(function ($user) use(&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeads, $payload, &$payrollAccruedAllowanceIncomeData,&$EmployeePfContributionPreparedData)
             {
                 $basicSalary = $user->hasOfficialInformation->hasSalaryStructure->where('salary_head_id',6)->first()->amount; // basic salary, 6 = basic head
 
@@ -444,12 +445,17 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                                             ->where('ot_date', date('Y'))
                                             ->where('ot_date', date('m'))
                                             ->sum('ot_amount');
-                        $PayrollPreSalarySheetDeduction[] = [
-                            'child_data_identifier_key_incoming' => null,
-                            'amount' => $employeeOtAmount,
-                            'type' => 'ot',
-                            'created_at' => date('Y-m-d H:i:s'),
-                        ];
+                        // $PayrollPreSalarySheetDeduction[] = [
+                        //     'child_data_identifier_key_incoming' => null,
+                        //     'amount' => $employeeOtAmount,
+                        //     'type' => 'ot',
+                        //     'created_at' => date('Y-m-d H:i:s'),
+                        // ];
+                    $payrollAccruedAllowanceIncomeData[] = [
+                        'employee_user_id' => $user->id,
+                        'ot_amount' => $employeeOtAmount,
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
 
 
                     $PayrollSalarySheetHeads[] = [
