@@ -8,5 +8,5 @@ class RosterAssignment extends Model
 {
     protected $table = 'roster_assignments';
     public $timestamps = false;
-    protected $fillable = [];
+    protected $guarded = [];
 }
