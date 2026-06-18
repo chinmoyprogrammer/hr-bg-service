@@ -9,6 +9,7 @@ use App\Jobs\ProcessTempSalaryJob;
 use App\Jobs\RecalculateAttendanceJob;
 use App\Jobs\ConfirmProvisionalEmployeesJob;
 use App\Jobs\SyncRosterAssignmentsJob;
+use App\Jobs\FiscalYearClosingJob;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -86,6 +87,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                 }
                 if ($targetQueue === 'syncRosterAssignments_queue') {
                     (new SyncRosterAssignmentsJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
+                if ($targetQueue === 'fiscalYearClosing_queue') {
+                    (new FiscalYearClosingJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
 
