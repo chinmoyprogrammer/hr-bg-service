@@ -60,7 +60,6 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
         foreach ($employees as $employee) {
             $employee->confirmation_date = $targetDate;
             if($employee->save()){
-                $allowedDays = $this->calculateAllowedLeaveDays($employee->provisioner_days, $employee->joining_date);
                 $this->assignLeaveBalanceToEmployee($employee);
 
             }
@@ -115,7 +114,19 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
         }
         //... insert data into employee_leave_balances table
         foreach ($leavePolicyDetails as $leavePolicyDetail) {
-
+            // Check if leave balance record already exists for this combination
+            $existingBalance = EmployeeLeaveBalance::query()
+                ->where('employee_user_id', $employeeOfficialInfo->employee_user_id)
+                ->where('leave_head_id', $leavePolicyDetail->leave_head_id)
+                ->where('leave_policy_id', $leavePolicyId)
+                ->where('fiscal_year', date('Y'))
+                ->first();
+            
+            if ($existingBalance) {
+                Log::info('test', ['existingBalance' => $existingBalance]);
+                continue;
+            }
+            
             // for new Employee, calculate employee leave days comparing to their joining date , according to HR policy
             $leaveDays = $this->calculateAllowedLeaveDays($leavePolicyDetail->days, $employeeOfficialInfo->joiningDate); // todo:: calculate according to formula // Done
 

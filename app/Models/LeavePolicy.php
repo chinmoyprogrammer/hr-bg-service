@@ -21,4 +21,8 @@ class LeavePolicy extends Model
     {
         return $this->hasMany(LeavePolicyDetail::class, 'leave_policy_id', 'id');
     }
+
+    public function hasEmployees(){
+        return $this->hasMany(EmployeeOfficialInformation::class, 'leave_policy_id', 'id');
+    }
 }
