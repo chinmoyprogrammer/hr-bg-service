@@ -201,6 +201,10 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         date('Y-m-t',  strtotime($endBoundary)),
                     ])
                     ->where('attendance_status', 2),
+                'hasEarlyOutRequests' => fn($q) => $q
+                    ->whereNull('deleted_at')
+                    ->whereBetween('out_date', [$startBoundary, $endBoundary])
+                    ->where('approval_status', 1),
             ])->get();
             /* ->whereIn('emp_code', function ($q) {
                 $q->select('emp_code')

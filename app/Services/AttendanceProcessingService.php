@@ -54,6 +54,7 @@ class AttendanceProcessingService
         $this->isAbsentInFirstHalf = false;
         // ── Manual punch override ─────────────────────────────────────────────────
         if ($manualPunch) {
+            $outDate = $manualPunch['out_date'] ?? $date;
             $fakeTemps = collect();
             if (!empty($manualPunch['in_time'])) {
                 $fakeTemps->push((object)[
@@ -157,7 +158,7 @@ class AttendanceProcessingService
         );
 
         $this->applyIncompleteInOutStatus($row, $date, $shift, $first, $statusesForLog);
-        $this->applyEarlyOutStatus($date, $shift, $last, $shiftEnd, $statusesForLog);
+        $this->applyEarlyOutStatus($row, $date, $shift, $last, $shiftEnd, $statusesForLog);
 
         $has_halfday_leave = $this->applyFirstHalfDayStatus(
             $date, $shift, $first, $last, $leaveApplicationDetails, $statusesForLog
@@ -214,6 +215,7 @@ class AttendanceProcessingService
 
         // Group punches by datetime (removes exact duplicates)
         $temps = $row->employeeAttendanceTemps->unique('punch_datetime');
+        Log::info('resolveFirstLastPunch-temps:', ['temps'=>$temps]);
 
         // Split into “in-window” and “out-of-window” punches
         $inWindow  = $temps->filter(fn($t) =>
@@ -222,6 +224,7 @@ class AttendanceProcessingService
         $outWindow = $temps->filter(fn($t) =>
             !Carbon::parse($t->punch_datetime)->between($start, $end)
         );
+        Log::info('resolveFirstLastPunch-Window:', ['inWindow'=>$inWindow, 'outWindow'=>$outWindow]);
 
         // If several punches fall inside the window keep only the first one
         if ($inWindow->count() > 1) {
@@ -642,7 +645,7 @@ class AttendanceProcessingService
     }
 
     private function applyEarlyOutStatus(
-        string $date, ?object $shift, ?object $last, string $shiftEnd, array &$statusesForLog
+        object $row, string $date, ?object $shift, ?object $last, string $shiftEnd, array &$statusesForLog
     ): void {
         if (!$last || !$shift) {
             return;
@@ -653,6 +656,11 @@ class AttendanceProcessingService
             strtotime($last->punch_datetime) <  strtotime($date . ' ' . $shiftEnd)
         ) {
             $statusesForLog[] = 7; // Early Out
+            $approvedEarlyOut = $row->hasEarlyOutRequests->where('out_date', $date)->first();
+
+            if($approvedEarlyOut){
+                $statusesForLog[] = 23; // Early Out Authorized
+            }
         }
     }
 
