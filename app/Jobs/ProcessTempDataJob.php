@@ -44,6 +44,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $endDate   = $this->payload['end_date']   ?? null;
 
 
+
             //...............start processing temp data...............
             $device_user_name = env('DEVICE_USER_NAME');
             $device_password = env('DEVICE_PASSWORD');
@@ -98,11 +99,24 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             if (is_array($responseJson)) {
                 $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
             }
-            //dd($records);
+            $employeesWhoUpdated = EmployeeAttendance::query()
+                ->where('date', $startDate)
+                ->where(function ($q) {
+                    $q->where('is_manual', 1)->orWhere('is_corrected', 1);
+                })
+                ->selectRaw('MAX(employee_user_id) as employee_user_id, emp_code')
+                ->groupBy('emp_code')
+                ->pluck('emp_code', 'employee_user_id')
+                ->toArray();
+             //Log::info('ProcessTempDataJob: employeesWhoUpdated', ['employeesWhoUpdated' => $employeesWhoUpdated]);
+
             $grouped = [];
             foreach ($records as $record) {
                 // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
                 if (!isset($record['emp_code'], $record['punch_time'])) {
+                    continue;
+                }
+                if (in_array($record['emp_code'], $employeesWhoUpdated)) {
                     continue;
                 }
                 $empCode = $record['emp_code'];
@@ -149,7 +163,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 // Log::info('pullRawDataFromDeviceToTempTable: temp insert done', [
                 //     'inserted' => count($insert_data),
                 // ]);
-                
             }
             else
             {
@@ -157,10 +170,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 return;
             }
             //...............end processing temp data...............
-
-
-
-
 
             if (!$startDate || !$endDate) {
                 Log::warning('ProcessTempDataJob: missing start_date or end_date', ['payload' => $this->payload]);
@@ -184,6 +193,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $dates = collect(\Carbon\Carbon::parse($startDate)->range(\Carbon\Carbon::parse($endDate)))
                 ->map(fn($d) => $d->format('Y-m-d'))
                 ->toArray();
+            //Log::info('ProcessTempDataJob: dates: quader', ['dates' => $dates, 'startDate' => $startDate, 'endDate' => $endDate]);
 
             // ── Pre-load shared look-up data ──────────────────────────────────────
             $officialInfos = EmployeeOfficialInformation::with([
@@ -205,7 +215,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     ->whereNull('deleted_at')
                     ->whereBetween('out_date', [$startBoundary, $endBoundary])
                     ->where('approval_status', 1),
-            ])->get();
+            ])
+            ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
+                $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
+            })
+            ->get();
             /* ->whereIn('emp_code', function ($q) {
                 $q->select('emp_code')
                 ->from('employee_attendance_temp')
@@ -264,7 +278,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             } */
 
             // ── Delete existing records for the date range ────────────────────────
-            $attRecordIds = EmployeeAttendance::whereIn('date', $dates)->pluck('id');
+            $attRecordIds = EmployeeAttendance::whereIn('date', $dates)->whereRaw('is_corrected = 0 AND is_manual = 0')->pluck('id');
 
             if ($attRecordIds->isNotEmpty()) {
                 $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)

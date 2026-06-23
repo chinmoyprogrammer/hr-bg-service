@@ -59,7 +59,10 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'employee_user_id' => (int) $item['employee_user_id'],
                 'date'             => $item['date'],
                 'in_time'          => $item['in_time']  ?? null,
+                'out_date'          => $item['out_date'],
                 'out_time'         => $item['out_time'] ?? null,
+                'is_corrected'     => $item['is_corrected'] ?? 0,
+                'is_manual'        => $item['is_manual'] ?? 0,
             ];
         }
 
