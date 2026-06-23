@@ -158,6 +158,12 @@ class EmployeeOfficialInformation extends Model
     {
         return $this->hasOne(EmployeePfContribution::class, 'employee_user_id', 'employee_user_id');
     }
+
+    public function employeeAttendance()
+    {
+        return $this->hasMany(EmployeeAttendance::class, 'employee_user_id', 'employee_user_id');
+    }
+
     //employee has early_out_requests
     public function hasEarlyOutRequests()
     {
