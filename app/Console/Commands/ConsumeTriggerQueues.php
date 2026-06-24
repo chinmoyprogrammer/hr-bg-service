@@ -18,6 +18,7 @@ class ConsumeTriggerQueues extends Command
     public function handle(): int
     {
         $queues = $this->option('queues') ?: env('HR_BG_TRIGGER_QUEUES', '');
+        
         $queueList = array_values(array_filter(array_map('trim', explode(',', (string) $queues))));
 
         if (!$queueList) {
@@ -49,10 +50,11 @@ class ConsumeTriggerQueues extends Command
                 false,
                 false,
                 function ($msg) use ($queueName) {
+                    
                     $body = $msg->getBody();
-
                     try {
                         $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+                        
                     } catch (\Throwable $e) {
                         Log::error('Trigger message is not valid JSON', [
                             'queue' => $queueName,
@@ -62,7 +64,7 @@ class ConsumeTriggerQueues extends Command
                         $msg->ack();
                         return;
                     }
-
+                    Log::info('Consuming trigger message from queue final: ' . $queueName);
                     try {
                         $this->dispatchFromTriggerQueue($queueName, is_array($payload) ? $payload : []);
                         $msg->ack();
@@ -92,6 +94,7 @@ class ConsumeTriggerQueues extends Command
 
     private function dispatchFromTriggerQueue(string $queueName, array $payload): void
     {
+        Log::info('Consuming trigger message', ['queue' => $queueName, 'payload' => $payload]);
         $suffix = '_trigger_queue';
         if (!\Illuminate\Support\Str::endsWith($queueName, $suffix)) {
             Log::warning('No trigger handler registered for queue', [
