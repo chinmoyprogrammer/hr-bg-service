@@ -196,6 +196,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             //Log::info('ProcessTempDataJob: dates: quader', ['dates' => $dates, 'startDate' => $startDate, 'endDate' => $endDate]);
 
             // ── Pre-load shared look-up data ──────────────────────────────────────
+            Log::warning('start end boundary', ['payload' => [$startBoundary, $endBoundary]]);
             $officialInfos = EmployeeOfficialInformation::with([
                 'employeeAttendanceTemps' => fn($q) => $q
                     ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $endBoundary])
@@ -219,7 +220,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
             })
+            ->where('employee_user_id', 38)
             ->get();
+            // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {
                 $q->select('emp_code')
                 ->from('employee_attendance_temp')

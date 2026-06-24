@@ -99,8 +99,8 @@ class AttendanceProcessingService
                 ->exists();
 
         // ── Resolve first / last punches for this date ────────────────────────────
-        [$first, $last] = $this->resolveFirstLastPunch($row, $date, $shift);
-        Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last]);
+        [$first, $last, $lastBeforeCutoff] = $this->resolveFirstLastPunch($row, $date, $shift);
+        Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if ($row->employeeAttendanceTemps->isEmpty()) {
@@ -132,8 +132,8 @@ class AttendanceProcessingService
 
         // ── Overnight checkout: update *previous* day's record and skip this date ─
         Log::info('before handleOvernightCheckoutForNormalShift check:');
-        if ($this->handleOvernightCheckoutForNormalShift($row, $date, $shift, $first, $last, $now, $statusesForLog)) {
-            $result['skip'] = true;
+        if ($this->handleOvernightCheckoutForNormalShift($row, $date, $shift, $first, $last, $now, $statusesForLog, $lastBeforeCutoff)) {
+            $result['skip'] = 1;
             return $result;
         }
         if($this->isManual==1 || $this->isCorrected==1){
@@ -145,7 +145,7 @@ class AttendanceProcessingService
 
         // ── Night shift cross-day checkout update ─────────────────────────────────
         if ($this->handleNightShiftCheckout($row, $date, $shift, $first, $last, $now, $result)) {
-            $result['skip'] = true;
+            $result['skip'] = 2;
             return $result;
         }
         Log::warning('after overnight shift', [$result]);
@@ -225,62 +225,54 @@ class AttendanceProcessingService
         $start = Carbon::parse($date.' '.$shift->start_check_in_time);
         $end   = Carbon::parse($date.' '.$shift->end_check_in_time);
 
-        // Group punches by datetime (removes exact duplicates)
-        $temps = $row->employeeAttendanceTemps->unique('punch_datetime');
+        // Split punches by a fixed 05:00 cutoff:
+        // - keep punches at/after 05:00:00 for normal first/last selection
+        // - from 00:00:00 to 04:59:59 keep only the latest one
+        $temps = $row->employeeAttendanceTemps
+            ->unique('punch_datetime')
+            ->sortBy('punch_datetime')
+            ->values();
 
-        // Split into “in-window” and “out-of-window” punches
-        $inWindow  = $temps->filter(fn($t) =>
-            Carbon::parse($t->punch_datetime)->between($start, $end)
-        );
-        $outWindow = $temps->filter(fn($t) =>
-            !Carbon::parse($t->punch_datetime)->between($start, $end)
-        );
-        Log::info('resolveFirstLastPunch-Window:', ['inWindow'=>$inWindow, 'outWindow'=>$outWindow]);
-
-        // If several punches fall inside the window keep only the first one
-        if ($inWindow->count() > 1) {
-            $inWindow = collect([$inWindow->sortBy('punch_datetime')->first()]);
+        if($row->employeeAttendanceTemps->isEmpty())
+        {
+            return [null, null, null];
         }
 
-        // Re-assemble the collection
-        $temps = $inWindow->concat($outWindow);
-        // Group punches by datetime (removes exact duplicates)
-        $temps = $temps->unique('punch_datetime');
-        Log::warning('test', ['temps'=>$temps, 'employeeAttendanceTemps'=>$row->employeeAttendanceTemps]);
-        
+        $cutoffTime = $shift->start_check_in_time;
 
-        $forDate = $temps->filter(fn($t) => Carbon::parse($t->punch_datetime)->isSameDay($date));
-        if($this->isManual==1 || $this->isCorrected==1){
-            $forDate = $temps;
-        }
-        $first = $forDate->sortBy('punch_datetime')->first();
-        $last  = $forDate->sortByDesc('punch_datetime')->first();
+        $beforeCutoff = $temps->filter(function ($t) use ($cutoffTime) {
+            return Carbon::parse($t->punch_datetime)->format('H:i:s') < $cutoffTime;
+        })->values();
 
-        Log::warning('test', [$first, $last, $first->punch_datetime, $last->punch_datetime]);
+        $afterCutoff = $temps->filter(function ($t) use ($cutoffTime) {
+            return Carbon::parse($t->punch_datetime)->format('H:i:s') >= $cutoffTime;
+        })->values();
 
-        if ($first && $first->punch_datetime instanceof Carbon) {
-            $first->punch_datetime = $first->punch_datetime->toDateTimeString();
-        }
-        if ($last && $last->punch_datetime instanceof Carbon) {
-            $last->punch_datetime = $last->punch_datetime->toDateTimeString();
+        $lastBeforeCutoff = $beforeCutoff->last();
+        $first = $afterCutoff->first();
+        $last = $afterCutoff->last();
+
+        if (!$first && $lastBeforeCutoff) {
+            $first = null;
+            $last = null;
         }
 
         if ($first && $last && (string) $first->punch_datetime === (string) $last->punch_datetime) {
             $last = null;
         }
-        // Replace the original collection with the cleaned one for the rest of the flow
-        $row->employeeAttendanceTemps = $temps;
 
-        Log::warning('test', ['first'=>$first, 'last'=>$last]);
+        // $cleanedTemps = $afterCutoff;
+        // if ($lastBeforeCutoff) {
+        //     $cleanedTemps = $cleanedTemps->push($lastBeforeCutoff);
+        // }
+        // $row->employeeAttendanceTemps = $cleanedTemps
+        //     ->unique('punch_datetime')
+        //     ->sortBy('punch_datetime')
+        //     ->values();
 
-        // Single punch: treat out as unknown
-        /* if ($first && $last && $first->punch_datetime->eq($last->punch_datetime)) {
-            $last = null; 
-        } */
+        Log::warning('In Out times with cutoff time', ['payload' => [$first, $last,$lastBeforeCutoff]]);
 
-        Log::warning('test', [$first, $last]);
-
-        return [$first, $last];
+        return [$first, $last,$lastBeforeCutoff];
     }
 
     private function resolveAbsentStatuses(
@@ -310,14 +302,16 @@ class AttendanceProcessingService
      * belongs to the previous day. Updates the previous day's record and
      * returns true to signal "skip current date".
      */
-    private function handleOvernightCheckoutForNormalShift(
+    private function handleOvernightCheckoutForNormalShift( 
         object $row, string $date, ?object $shift,
-        ?object $first, ?object $last, string $now, array &$statusesForLog
+        ?object $first, ?object $last, string $now, array &$statusesForLog, $lastBeforeCutoff 
     ): bool {
         Log::warning('test before:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) . '<=' . strtotime($first->punch_datetime)]);
+        Log::warning('handleOvernightCheckoutForNormalShift :', ['lastBeforeCutoff'=>$lastBeforeCutoff]);
         if (
-            !$first || !$shift || $shift->is_overnight == 1 || !$first->punch_datetime ||
-            (strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime))
+            // !$first || !$shift || $shift->is_overnight == 1 || !$first->punch_datetime ||
+            // (strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime))
+            $lastBeforeCutoff == null
         ) {
             Log::info('it is not an overnight checkout');
             return false;
@@ -332,8 +326,8 @@ class AttendanceProcessingService
 
         if ($prevAttendance && ($this->isManual==0 && $this->isCorrected==0)) {
             $prevAttendance->update([
-                'out_time' => date('H:i:s', strtotime($first->punch_datetime?? $last->punch_datetime)),
-                'out_date' => $date,
+                'out_time' => date('H:i:s', strtotime($lastBeforeCutoff->punch_datetime)),
+                'out_date' => date('Y-m-d', strtotime($lastBeforeCutoff->punch_datetime)),
             ]);
             EmployeeAttendanceStatusLog::insert([
                 'employee_user_id'       => $row->employee_user_id,
@@ -361,7 +355,7 @@ class AttendanceProcessingService
         }else{
             return false;
         }
-        return true;
+        return false;
     }
 
     /*
