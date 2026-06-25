@@ -131,7 +131,7 @@ class AttendanceProcessingService
         Log::warning('before overnight shift', [$result]);
 
         // ── Overnight checkout: update *previous* day's record and skip this date ─
-        Log::info('before handleOvernightCheckoutForNormalShift check:');
+        Log::info('before handleOvernightCheckoutForNormalShift check:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
         if ($this->handleOvernightCheckoutForNormalShift($row, $date, $shift, $first, $last, $now, $statusesForLog, $lastBeforeCutoff)) {
             $result['skip'] = 1;
             return $result;
@@ -217,14 +217,15 @@ class AttendanceProcessingService
 
     private function resolveFirstLastPunch(object $row, string $date, object $shift): array
     {
+        Log::warning('resolveFirstLastPunch:9999', ['resolveFirstLastPunch'=>$row]);
         if ($row->employeeAttendanceTemps->isEmpty()) {
-            return [null, null];
+            return [null, null, null];
         }
-
+Log::warning('resolveFirstLastPunch 1 :', ['resolveFirstLastPunch'=>$row]);
         // Build a window for the check-in period
         $start = Carbon::parse($date.' '.$shift->start_check_in_time);
         $end   = Carbon::parse($date.' '.$shift->end_check_in_time);
-
+Log::warning('resolveFirstLastPunch 2 :', ['resolveFirstLastPunch'=>$row]);
         // Split punches by a fixed 05:00 cutoff:
         // - keep punches at/after 05:00:00 for normal first/last selection
         // - from 00:00:00 to 04:59:59 keep only the latest one
@@ -238,29 +239,31 @@ class AttendanceProcessingService
             return [null, null, null];
         }
 
+         Log::warning('resolveFirstLastPunch 3 :', ['resolveFirstLastPunch'=>$row]);
+
         $cutoffTime = $shift->start_check_in_time;
 
         $beforeCutoff = $temps->filter(function ($t) use ($cutoffTime) {
             return Carbon::parse($t->punch_datetime)->format('H:i:s') < $cutoffTime;
         })->values();
-
+Log::warning('resolveFirstLastPunch 4 :', ['resolveFirstLastPunch'=>$row]);
         $afterCutoff = $temps->filter(function ($t) use ($cutoffTime) {
             return Carbon::parse($t->punch_datetime)->format('H:i:s') >= $cutoffTime;
         })->values();
-
+Log::warning('resolveFirstLastPunch 5 :', ['resolveFirstLastPunch'=>$row]);
         $lastBeforeCutoff = $beforeCutoff->last();
         $first = $afterCutoff->first();
         $last = $afterCutoff->last();
-
+Log::warning('resolveFirstLastPunch 6 :', ['resolveFirstLastPunch'=>$row]);
         if (!$first && $lastBeforeCutoff) {
             $first = null;
             $last = null;
         }
-
+Log::warning('resolveFirstLastPunch 7 :', ['resolveFirstLastPunch'=>$row]);
         if ($first && $last && (string) $first->punch_datetime === (string) $last->punch_datetime) {
             $last = null;
         }
-
+Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
         // $cleanedTemps = $afterCutoff;
         // if ($lastBeforeCutoff) {
         //     $cleanedTemps = $cleanedTemps->push($lastBeforeCutoff);
@@ -306,8 +309,8 @@ class AttendanceProcessingService
         object $row, string $date, ?object $shift,
         ?object $first, ?object $last, string $now, array &$statusesForLog, $lastBeforeCutoff 
     ): bool {
-        Log::warning('test before:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) . '<=' . strtotime($first->punch_datetime)]);
-        Log::warning('handleOvernightCheckoutForNormalShift :', ['lastBeforeCutoff'=>$lastBeforeCutoff]);
+        //Log::warning('test before:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) . '<=' . strtotime($first->punch_datetime)]);
+        Log::warning('handleOvernightCheckoutForNormalShift --- :', ['lastBeforeCutoff'=>$lastBeforeCutoff]);
         if (
             // !$first || !$shift || $shift->is_overnight == 1 || !$first->punch_datetime ||
             // (strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime))
@@ -317,7 +320,7 @@ class AttendanceProcessingService
             return false;
         }
 
-        Log::warning('test after:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)]);
+        //Log::warning('test after:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)]);
 
         $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
             ->where('date', date('Y-m-d', strtotime($date . ' -1 day')))
