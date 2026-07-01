@@ -270,7 +270,7 @@ Log::warning('resolveFirstLastPunch 7 :', ['resolveFirstLastPunch'=>$row]);
 Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
 
-        if ($first && $last && strtotime($shift->clock_in.'+ 10 minutes') >= strtotime($last->punch_datetime)) {
+        if ($first && $last && strtotime($date.' '.$shift->clock_in.'+ 10 minutes') >= strtotime($last->punch_datetime)) {
             $last = null;
         }
 
@@ -283,6 +283,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         //     ->unique('punch_datetime')
         //     ->sortBy('punch_datetime')
         //     ->values();
+
+
 
         Log::warning('In Out times with cutoff time', ['payload' => [$first, $last,$lastBeforeCutoff]]);
 
