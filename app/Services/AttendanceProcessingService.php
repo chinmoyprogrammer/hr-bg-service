@@ -260,10 +260,21 @@ Log::warning('resolveFirstLastPunch 6 :', ['resolveFirstLastPunch'=>$row]);
             $last = null;
         }
 Log::warning('resolveFirstLastPunch 7 :', ['resolveFirstLastPunch'=>$row]);
-        if ($first && $last && (string) $first->punch_datetime === (string) $last->punch_datetime) {
+        if ($first && $last) {
+            $firstTrimmed = Carbon::parse((string) $first->punch_datetime)->startOfMinute();
+            $lastTrimmed = Carbon::parse((string) $last->punch_datetime)->startOfMinute();
+            if ($firstTrimmed->eq($lastTrimmed)) {
+                $last = null;
+            }
+        }
+Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
+
+
+        if ($first && $last && strtotime($date.' '.$shift->clock_in.'+ 10 minutes') >= strtotime($last->punch_datetime)) {
             $last = null;
         }
-Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
+
+
         // $cleanedTemps = $afterCutoff;
         // if ($lastBeforeCutoff) {
         //     $cleanedTemps = $cleanedTemps->push($lastBeforeCutoff);
@@ -272,6 +283,8 @@ Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
         //     ->unique('punch_datetime')
         //     ->sortBy('punch_datetime')
         //     ->values();
+
+
 
         Log::warning('In Out times with cutoff time', ['payload' => [$first, $last,$lastBeforeCutoff]]);
 

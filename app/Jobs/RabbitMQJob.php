@@ -93,6 +93,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                     (new FiscalYearClosingJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
+                if ($targetQueue === 'cacheRegenerate_queue') {
+                    (new CacheRegenerateJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
 
                 Log::info('RabbitMQJob skipped re-publish due to same queue', ['queue' => $targetQueue, 'payload' => $this->data]);
                 return;
