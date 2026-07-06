@@ -180,7 +180,7 @@ class AttendanceProcessingService
 
         // ── Attendance statuses ───
         $this->applyPresentOrLateStatus(
-            $row, $date, $shift, $first, $shiftStart, $grace, $now, $statusesForLog
+            $row, $date, $shift, $first, $last, $shiftStart, $grace, $now, $statusesForLog
         );
 
         $this->applyBothHalfDayAbsentStatus(
@@ -496,7 +496,7 @@ Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
     }
 
     private function applyPresentOrLateStatus(
-        object $row, string $date, ?object $shift, ?object $first,
+        object $row, string $date, ?object $shift, ?object $first, ?object $last,
         string $shiftStart, int $grace, string $now, array &$statusesForLog
     ): void {
         if (!$first || !$shift) {
@@ -521,22 +521,39 @@ Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
 
         if ($punchTime > $graceEnd) {
             $statusesForLog[] = 2; //Late
-            $this->processLateDeduction($row, $date, $shift, $first, $now);
+            $this->processLateDeduction($row, $date, $shift, $first, $last, $now);
         }
     }
 
     private function processLateDeduction(
-        object $row, string $date, ?object $shift, object $first, string $now
+        object $row, string $date, ?object $shift, object $first, ?object $last, string $now
     ): void {
         $lateDeductionPolicy = $row->hasLateDeductionPolicy;
         if (!$lateDeductionPolicy) {
             return;
         }
+        /* Log::info('lateDeductionPolicy:', [
+            'deduction_basis'=>$lateDeductionPolicy->deduction_basis, 
+            'check_exist'=>empty($row->lateDays),
+            'count'=>$row->lateDays->count(),
+            'max_late' => $lateDeductionPolicy->max_late_days + 1,
+            $lateDeductionPolicy->deduction_basis === 'Day',
+            !empty($row->lateDays),
+            $row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)===0
+        ]); */
 
         if (
             $lateDeductionPolicy->deduction_basis === 'Day' &&
-            (!empty($row->lateDays) && $row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)) === 0
+            (!empty($row->lateDays) && ($row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)===0))
         ) {
+            $employee_user_id = $row->employee_user_id;
+            /* Log::info('lateDeductionPolicy:', [
+                'deduction_basis'=>$lateDeductionPolicy->deduction_basis, 
+                'check_exist'=>empty($row->lateDays),
+                'count'=>$row->lateDays->count(),
+                'max_late' => $lateDeductionPolicy->max_late_days + 1
+            ]); */
+            //Log::info('processLateDeduction:', [$row, $date, $shift, $first, $now]);
             // Purge existing month records and rebuild from scratch
             $recordIds = LateAttendanceRecord::where('employee_user_id', $row->employee_user_id)
                 ->where('month', date('m', strtotime($date)))
@@ -548,19 +565,28 @@ Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
                 LateAttendanceRecord::whereIn('id', $recordIds)->delete();
             }
 
+            
+
             $lateCount = !empty($row->lateDays) ? $row->lateDays->count() : 0;
             $cycle     = $lateDeductionPolicy->max_late_days + 1;
             $rowsToInsert = intdiv($lateCount, $cycle);
 
             for ($i = 0; $i < $rowsToInsert; $i++) {
-                $lateRecord   = LateAttendanceRecord::create([
-                    'employee_user_id' => $row->employee_user_id,
+                $lateRecordArr = [
+                    'employee_user_id' => $employee_user_id,
                     'month'            => date('m', strtotime($date)),
                     'year'             => date('Y', strtotime($date)),
                     'created_user_id'  => $this->systemUserId,
                     'created_at'       => $now,
-                ]);
+                    'shift_id'         => $shift->id,
+                    'late_deduction_policy_id' => $lateDeductionPolicy->id,
+                    'late_days'        => 5,
+                    'late_minutes'     => 0,
+                ];
+                $lateRecord   = LateAttendanceRecord::create($lateRecordArr);
                 $totalSeconds = 0;
+
+                Log::info("loop_".$i, ['employee_user_id'=>$row->employee_user_id, 'lateRecordArr'=>$lateRecordArr, 'lateRecord'=>$lateRecord]);
 
                 for ($j = 0; $j < $cycle && ($i * $cycle + $j) < $lateCount; $j++) {
                     $lateDay = $row->lateDays->sortBy('attendance_date')->values()[$i * $cycle + $j] ?? null;
@@ -576,7 +602,14 @@ Log::warning('resolveFirstLastPunch 8 :', ['resolveFirstLastPunch'=>$row]);
                         'late_attendance_record_id' => $lateRecord->id,
                         'date'                      => $lateDay->attendance_date,
                         'late_seconds'              => $lateSeconds,
-                    ]);
+                        'shift_id'                  => $shift->id,
+                        'in_time'                   => $first->punch_datetime,
+                        'out_time'                  => $last->punch_datetime ?? null,
+                        'created_at'                => $now,
+                        'year'                      => date('Y', strtotime($date)),
+                        'month'                     => date('m', strtotime($date)),
+
+                    ]);  
                 }
 
                 LateAttendanceRecord::where('id', $lateRecord->id)
