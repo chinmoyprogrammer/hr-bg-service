@@ -9,7 +9,7 @@ class LateAttendanceRecord extends Model
     //
     protected $table = 'late_attendance_records';
     protected $fillable = [
-        'employee_id',
+        'employee_user_id',
         'late_days',
         'shift_id',
         'calculated_deduction',
