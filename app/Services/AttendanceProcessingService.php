@@ -202,7 +202,7 @@ class AttendanceProcessingService
         $result['rowKey']    = $rowKey;
         $result['attendance'] = $this->buildAttendanceRow(
             $row, $date, $shift, $inTime, $outDate, $outTime,
-            $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours
+            $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours, $statusesForLog
         );
         $result['statusLogs'] = $this->buildStatusLogRows(
             $row->employee_user_id, $date, $now, $statusesForLog
@@ -857,8 +857,13 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         ?string $inTime, ?string $outDate, ?string $outTime,
         bool $transferedToOTStatus,
         ?object $publicHoliday, ?object $empHoliday,
-        int $isJoin, string $now, float $workingHours = 0
+        int $isJoin, string $now, float $workingHours = 0, array $statusesForLog = []
     ): array {
+        if(in_array(10, $statusesForLog)){
+            $outTime = $inTime;
+            $inTime = 'NULL';
+
+        }
         return [
             'emp_code'                                   => $row->emp_code,
             'employee_user_id'                           => $row->employee_user_id,
@@ -870,7 +875,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'shift_end_time'                             => $shift->clock_out     ?? '18:00:00',
             'date'                                       => $date,
             'in_time'                                    => $inTime,
-            'out_date'                                   => $outDate,
+            'out_date'                                   => $outDate ?? $date,
             'out_time'                                   => $outTime,
             'on_leave_status'                            => null,
             'transfered_to_ot'                           => $transferedToOTStatus ? 1 : 0,
