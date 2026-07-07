@@ -133,6 +133,9 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
             foreach (array_chunk($rows, 500) as $chunk) {
                 DB::table('holidays')->insert($chunk);
             }
+            
+            // Calculate and insert working days
+            $this->calculateAndInsertWorkingDays($year, $employeeIds, $rowsByKey);
         });
     }
 
@@ -336,5 +339,122 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
             'updated_user_id' => null,
             'created_at' => $data['created_at'] ?? date('Y-m-d H:i:s'),
         ];
+    }
+    
+    private function calculateAndInsertWorkingDays(int $year, ?array $employeeIds, array $rowsByKey): void
+    {
+        $systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $now = date('Y-m-d H:i:s');
+        
+        // Get all employees (or filtered ones)
+        $employeesQuery = EmployeeOfficialInformation::with(['hasWeekendDays' => function ($query) {
+            $query->whereNull('deleted_at')->whereNull('deleted_by');
+        }]);
+        
+        if (!empty($employeeIds)) {
+            $employeesQuery->whereIn('employee_user_id', $employeeIds);
+        }
+        
+        $employees = $employeesQuery->get();
+        
+        // Preprocess all holidays from rowsByKey
+        $allHolidays = [];
+        foreach ($rowsByKey as $row) {
+            $dateKey = $row['date'];
+            $empId = $row['employee_user_id'];
+            
+            // For global holidays (empId is null), we'll add them to all employees
+            if ($empId === null) {
+                foreach ($employees as $e) {
+                    if (!isset($allHolidays[$e->employee_user_id][$dateKey])) {
+                        $allHolidays[$e->employee_user_id][$dateKey] = true;
+                    }
+                }
+            } else {
+                $allHolidays[$empId][$dateKey] = true;
+            }
+        }
+        
+        // Preprocess all weekends for each employee
+        $allWeekends = [];
+        $start = Carbon::parse(sprintf('%04d-01-01', $year))->startOfDay();
+        $end = Carbon::parse(sprintf('%04d-12-31', $year))->endOfDay();
+        
+        foreach ($employees as $employee) {
+            $empId = $employee->employee_user_id;
+            $allWeekends[$empId] = [];
+            
+            foreach ($employee->hasWeekendDays as $rule) {
+                $dow = (int) $rule->php_week_day_code;
+                $isAlternated = (int) ($rule->is_alternated ?? 0) === 1;
+                $altStart = !empty($rule->alternate_starting_date) ? Carbon::parse($rule->alternate_starting_date)->startOfDay() : Carbon::parse($employee->joining_date)->startOfDay();
+                
+                foreach ($this->generateWeekendDates($start, $end, $dow, $isAlternated, $altStart) as $date) {
+                    $dateStr = $date->toDateString();
+                    $allWeekends[$empId][$dateStr] = true;
+                }
+            }
+        }
+        
+        // Now calculate for each month
+        $workingDayRows = [];
+        
+        for ($month = 1; $month <= 12; $month++) {
+            $firstDay = Carbon::createFromDate($year, $month, 1);
+            $lastDay = $firstDay->copy()->endOfMonth();
+            $totalDays = $lastDay->daysInMonth;
+            
+            foreach ($employees as $employee) {
+                $empId = $employee->employee_user_id;
+                $empHolidays = $allHolidays[$empId] ?? [];
+                $empWeekends = $allWeekends[$empId] ?? [];
+                
+                $holidaysCount = 0;
+                $weekendsCount = 0;
+                $combinedOffDays = [];
+                
+                // Calculate holidays and weekends for this month
+                for ($day = 1; $day <= $totalDays; $day++) {
+                    $dateStr = sprintf('%04d-%02d-%02d', $year, $month, $day);
+                    $isHoliday = isset($empHolidays[$dateStr]);
+                    $isWeekend = isset($empWeekends[$dateStr]);
+                    
+                    if ($isHoliday) {
+                        $holidaysCount++;
+                        $combinedOffDays[$dateStr] = true;
+                    }
+                    if ($isWeekend) {
+                        $weekendsCount++;
+                        $combinedOffDays[$dateStr] = true;
+                    }
+                }
+                
+                $workingDaysCount = $totalDays - count($combinedOffDays);
+                
+                $workingDayRows[] = [
+                    'employee_user_id' => $empId,
+                    'year' => $year,
+                    'month' => $month,
+                    'total_days' => $totalDays,
+                    'holidays_count' => $holidaysCount,
+                    'weekends_count' => $weekendsCount,
+                    'working_days_count' => $workingDaysCount,
+                    'created_user_id' => $systemUserId,
+                    'created_at' => $now
+                ];
+            }
+        }
+        
+        // Delete old working days for the year and insert new ones
+        $deleteQuery = DB::table('working_days')->where('year', $year);
+        if (!empty($employeeIds)) {
+            $deleteQuery->whereIn('employee_user_id', $employeeIds);
+        }
+        $deleteQuery->delete();
+        
+        // Insert new working days
+        foreach (array_chunk($workingDayRows, 500) as $chunk) {
+            DB::table('working_days')->insert($chunk);
+        }
     }
 }
