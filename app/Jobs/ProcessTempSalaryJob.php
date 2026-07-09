@@ -45,48 +45,74 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
         User::with(
-                    [
-                        'hasOfficialInformation',
-                        'hasOfficialInformation.employeePfPolicy',
-                        'hasOfficialInformation.hasPfContribution'=>function($query){
-                            $query->whereYear('created_at', date('Y'))->sortBy('created_at','desc');
-                        },
-                        'loans' => function($query){
-                            $query->where('is_fully_paid', 0);
-                            },
-                        'hasOfficialInformation.attendanceLogs' => function($query) use($payload) {
-                                $query->whereBetween('attendance_date',  [  
-                                    date('Y-m-01', strtotime($payload['salary_calculate_month_year'])), 
+                [
+                    'hasOfficialInformation' => function ($query) {
+                        $query->whereNull('deleted_at')->whereNull('deleted_by');
+                    },
+                    'hasOfficialInformation.employeePfPolicy' => function ($query) {
+                        $query->whereNull('deleted_at')->whereNull('deleted_by');
+                    },
+                    'hasOfficialInformation.hasPfContribution' => function($query) use($payload){
+                        $query->whereNull('deleted_at')
+                            ->whereNull('deleted_by')
+                            ->whereYear('effective_date', date('Y', strtotime($payload['salary_calculate_month_year'])))
+                            ->orderBy('effective_date', 'desc');
+                    },
+                    'loans' => function($query){
+                        $query->whereNull('deleted_at')
+                            ->whereNull('deleted_by')
+                            ->where('is_fully_paid', 0);
+                    },
+                    'hasOfficialInformation.attendanceLogs' => function($query) use($payload) {
+                            $query->whereNull('deleted_at')
+                                ->whereNull('deleted_by')
+                                ->whereBetween('attendance_date',  [
+                                    date('Y-m-01', strtotime($payload['salary_calculate_month_year'])),
                                     date('Y-m-t', strtotime($payload['salary_calculate_month_year']))
                                 ]);
-                            },
-                        'hasOfficialInformation.hasLateAttendanceRecords' => function($query) use($payload) { //// this is basically for "deductable" late attendance records
-                            $query
-                            ->where('month',    
-                                    date('m', strtotime($payload['salary_calculate_month_year']))
-                                )
+                    },
+                    'hasOfficialInformation.hasLateAttendanceRecords' => function($query) use($payload) { //// this is basically for "deductable" late attendance records
+                        $query->whereNull('deleted_at')
+                            ->whereNull('deleted_by')
+                            ->where('month',
+                                date('m', strtotime($payload['salary_calculate_month_year']))
+                            )
                             ->where('year', date('Y', strtotime($payload['salary_calculate_month_year'])));
-                            },
-                        'hasOfficialInformation.hasSalaryStructure' ,
-                        'hasOfficialInformation.hasPrProblemRegisterAccousedPerson',
-                        'hasOfficialInformation.hasOTData',
-                        'hasOfficialInformation.hasLateDeductionPolicy',
-                    ]
-                )
-            ->whereHas('hasOfficialInformation')
+                    },
+                    'hasOfficialInformation.hasSalaryStructure' => function ($query) {
+                        $query->whereNull('deleted_at')->whereNull('deleted_by');
+                    },
+                    'hasOfficialInformation.hasPrProblemRegisterAccousedPerson' => function ($query) {
+                        $query->whereNull('deleted_at')->whereNull('deleted_by');
+                    },
+                    'hasOfficialInformation.hasOTData' => function ($query) {
+                        $query->whereNull('deleted_at')->whereNull('deleted_by');
+                    },
+                    'hasOfficialInformation.hasLateDeductionPolicy' => function ($query) {
+                        $query->whereNull('deleted_at')->whereNull('deleted_by');
+                    },
+                ]
+            )
             ->where('status', 1)
             ->where('user_type_id', 1) // 1 = employee
             ->where('is_draft', 0)
-            ->where('deleted_by', null)
+            ->whereNull('deleted_by')
+            ->whereNull('deleted_at')
             ->lazy()
             ->each(function ($user) use(&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeads, $payload, &$payrollAccruedAllowanceIncomeData,&$EmployeePfContributionPreparedData)
             {
+                if($user->id <> 200){
+                    return;
+                }
+                Log::info("Main User Row: ", ['user' => $user]);
                 $basicSalary = $user->hasOfficialInformation->hasSalaryStructure->where('salary_head_id',6)->first()->amount; // basic salary, 6 = basic head
+                Log::info("Basic Salary: ", ['basicSalary' => $basicSalary]);
 
-                $gross_salary_of_1_day = $user->hasOfficialInformation->gross_salary / date('t');
-                $basic_salary_of_1_day =  $basicSalary/ date('t'); 
+                $gross_salary_of_1_day = $user->hasOfficialInformation->gross_salary / date('t', strtotime($payload['salary_calculate_month_year']));
+                $basic_salary_of_1_day =  $basicSalary/ date('t', strtotime($payload['salary_calculate_month_year'])); 
                 // Log::info('Line 52', ['payload' => $user]);
                 // Log::info('Line 52', ['payload' => $user]);
+                Log::info('Loan data: ', ['user->loans' => $user->loans]);
                 if($user->loans->count() > 0)
                 {
                     $total_loan_amount = 0;
@@ -387,8 +413,6 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                             'created_user_id' => 1, // todo:: need a system user id
                             'created_at' => date('Y-m-d H:i:s'),
                         ];
-
-
                 }
 
 
