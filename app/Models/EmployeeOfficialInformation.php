@@ -170,5 +170,11 @@ class EmployeeOfficialInformation extends Model
         return $this->hasMany(EarlyOutRequest::class, 'employee_user_id', 'employee_user_id');
     }
 
+    // has separation application
+    public function hasSeparationApplication()
+    {
+        return $this->hasOne(SeparationApplication::class, 'employee_user_id', 'employee_user_id');
+    }
+
 }
 
