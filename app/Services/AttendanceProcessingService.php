@@ -229,6 +229,8 @@ class AttendanceProcessingService
                     'approve_reject_date' => date('Y-m-d'),
                     'employee_status_updated' => 1,
                 ]);
+                // deactivate the employee from ZKBio
+                deactivateEmployeeFromDevice($row->emp_code_old == 0 ? $row->emp_code_old : $row->emp_code);
             }
         }
 

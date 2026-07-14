@@ -2,6 +2,10 @@
 
 use App\Helpers\ApiResponse;
 use App\Models\EmployeeOtData;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+
 
 
 if (!function_exists('api_success')) {
@@ -177,5 +181,80 @@ if (!function_exists('getUserId'))
             return $defaultId;
         }
         return $defaultId;
+    }
+}
+
+// get device token
+if (!function_exists('getDeviceToken'))
+{
+    function getDeviceToken()
+    {
+            // Authenticate with ZKBio to get JWT token
+            $device_user_name = env('DEVICE_USER_NAME');
+            $device_password = env('DEVICE_PASSWORD');
+            $jwt_api_url = env('JWT_API_URL');
+            
+
+            $tokenResponse = Http::timeout(30)
+                ->withOptions(['verify' => false])
+                ->post($jwt_api_url, [
+                    'username' => $device_user_name,
+                    'password' => $device_password
+                ]);
+
+            if (!$tokenResponse->successful()) {
+                Log::error('EmployeeDeactivation: Failed to get JWT token from ZKBio.', ['response' => $tokenResponse->body()]);
+                return;
+            }
+
+            $token = (string) $tokenResponse->json('token');
+            if ($token === '') {
+                Log::error('EmployeeDeactivation: JWT token missing from ZKBio response.', ['response' => $tokenResponse->body()]);
+                return;
+            }
+            return $token;
+    }
+}
+
+
+
+// deactivate employee from device through API
+if (!function_exists('deactivateEmployeeFromDevice'))
+{
+    function deactivateEmployeeFromDevice($id)
+    {
+
+                $resign_api_url = env('RESIGN_API_URL');
+                $token = getDeviceToken();
+                if ($token === null) {
+                    return;
+                }
+                
+                // 3. Deactivate user in ZKBio time
+                $payload = [
+                    'employee' => $id,
+                    'disableatt' => true,
+                    'resign_type' => 1,
+                    'resign_date' => date('Y-m-d'),
+                    'reason' => ''
+                ];
+
+                $resignResponse = Http::timeout(60)
+                    ->retry(3, 5000)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Authorization' => 'JWT ' . $token
+                    ])
+                    ->withOptions(['verify' => false])
+                    ->post($resign_api_url, $payload);
+
+                if ($resignResponse->successful()) {
+                    Log::info("EmployeeDeactivation: Successfully deactivated employee in ZKBio.", ['employee_id' => $id, 'response' => $resignResponse->body()]);
+                    // Mark as updated
+                } else {
+                    Log::error("EmployeeDeactivation: Failed to deactivate employee in ZKBio.", ['employee_id' => $id, 'response' => $resignResponse->body()]);
+                }
+
+
     }
 }
