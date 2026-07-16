@@ -137,20 +137,20 @@ class EmployeeOfficialInformation extends Model
     // has salary stracture
     public function hasSalaryStructure()
     {
-        return $this->hasOne(PayrollSalaryHead::class, 'employee_user_id', 'employee_user_id');
+        return $this->hasMany(PayrollSalaryHead::class, 'employee_user_id', 'employee_user_id');
     }
 
 
     // has prProblemRegisterAccoused Person
     public function hasPrProblemRegisterAccousedPerson()
     {
-        return $this->hasOne(PrProblemRegisterAccousedPerson::class, 'user_id', 'employee_user_id');
+        return $this->hasMany(PrProblemRegisterAccousedPerson::class, 'user_id', 'employee_user_id');
     }
 
     //has OT data
     public function hasOTData()
     {
-        return $this->hasOne(EmployeeOtData::class, 'employee_user_id', 'employee_user_id');
+        return $this->hasMany(EmployeeOtData::class, 'employee_user_id', 'employee_user_id');
     }
 
     //has pf pf contribution
@@ -170,10 +170,17 @@ class EmployeeOfficialInformation extends Model
         return $this->hasMany(EarlyOutRequest::class, 'employee_user_id', 'employee_user_id');
     }
 
+     //has meal loan ait pf etc pauses
+    public function hasMealLoanAitPfEtcPauses()
+    {
+        return $this->hasMany(MealLoanAitPfEtcPause::class, 'employee_user_id', 'employee_user_id');
+    }
+
     // has separation application
     public function hasSeparationApplication()
     {
         return $this->hasOne(SeparationApplication::class, 'employee_user_id', 'employee_user_id');
+
     }
 
 }
