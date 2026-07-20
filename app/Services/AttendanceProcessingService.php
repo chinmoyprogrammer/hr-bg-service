@@ -861,6 +861,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
     ): array {
         if(in_array(10, $statusesForLog)){
             $outTime = $inTime;
+            $outDate = $outDate ?? $date;
             $inTime = 'NULL';
 
         }
@@ -875,7 +876,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'shift_end_time'                             => $shift->clock_out     ?? '18:00:00',
             'date'                                       => $date,
             'in_time'                                    => $inTime,
-            'out_date'                                   => $outDate ?? $date,
+            'out_date'                                   => $outDate,
             'out_time'                                   => $outTime,
             'on_leave_status'                            => null,
             'transfered_to_ot'                           => $transferedToOTStatus ? 1 : 0,
