@@ -198,6 +198,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             // ── Pre-load shared look-up data ──────────────────────────────────────
             Log::warning('start end boundary', ['payload' => [$startBoundary, $endBoundary]]);
             $officialInfos = EmployeeOfficialInformation::with([
+                'hasSeparationApplication',
                 'employeeAttendanceTemps' => fn($q) => $q
                     ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $endBoundary])
                     ->orderBy('punch_datetime'),

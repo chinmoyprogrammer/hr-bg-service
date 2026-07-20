@@ -11,6 +11,7 @@ use App\Models\EmployeeOtRequisition;
 use App\Models\Holiday;
 use App\Models\HolidayDutyRequisition;
 use App\Models\LeaveApplicationDetail;
+use App\Models\ManualAttendanceRecord;
 use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\Shift;
 use Illuminate\Bus\Queueable;
@@ -165,6 +166,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             }
 
             EmployeeAttendanceStatusLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
+            ManualAttendanceRecord::whereIn('employee_attendance_id', $attRecordIds)->delete();
             PayrollAccruedAllowanceIncome::whereIn('employee_attendance_id', $attRecordIds)->delete();
             EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
             EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
@@ -267,6 +269,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         $jobEnd         = date('Y-m-d H:i:s');
         $idMap          = [];
         $idMapByEmpDate = [];
+        $manualAttendanceRecords = [];
 
         $insertedRows = EmployeeAttendance::where('created_user_id', $systemUserId)
             ->whereBetween('created_at', [$jobStart, $jobEnd])
@@ -277,6 +280,25 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
             $idMap[$k]                                              = $r->id;
             $idMapByEmpDate[$r->employee_user_id . '|' . $r->date] = $r->id;
+        }
+
+        foreach ($idMapByEmpDate as $employeeDateKey => $employeeAttendanceId) {
+            if (!isset($manualPunchMap[$employeeDateKey])) {
+                continue;
+            }
+
+            $manualAttendanceRecords[] = [
+                'employee_attendance_id' => $employeeAttendanceId,
+                'created_at' => $jobEnd,
+                'created_by' => $systemUserId,
+                'employee_user_id' => $r->employee_user_id,
+            ];
+        }
+
+        if (!empty($manualAttendanceRecords)) {
+            foreach (array_chunk($manualAttendanceRecords, 500) as $chunk) {
+                ManualAttendanceRecord::insert($chunk);
+            }
         }
 
         // ── Insert status logs ────────────────────────────────────────────────
