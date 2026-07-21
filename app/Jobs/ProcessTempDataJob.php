@@ -323,7 +323,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $shift          = $shifts->get($shiftId);
                     $publicHoliday  = $publicHolidays->get($date);
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
-
+                    Log::info('empHoliday:', ['empHoliday:' => $row->employee_user_id . '|' . $date]);
                     $result = app(\App\Services\AttendanceProcessingService::class)->process(
                         $row,
                         $date,
