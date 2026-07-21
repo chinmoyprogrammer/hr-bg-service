@@ -208,6 +208,35 @@ class AttendanceProcessingService
             $row->employee_user_id, $date, $now, $statusesForLog
         );
 
+
+        //..... Deactivate user if mentioned in the separation application [start]
+
+        if(strtotime(date('Y-m-d').' '.$shift->clock_out) <= strtotime($now) && $last != null)
+        {
+        
+            //.. find the separation application
+            $separationApplication = $row->hasSeparationApplication->where('action_type', 'after_checkout')->first();
+            if (!$separationApplication != '' && $separationApplication->action_type == 'after_checkout') {
+                $separationApplicationInsertData = [
+                    'status' => 0,
+                    'login_eligibility' => 0,
+                ];
+                \App\Models\User::where('employee_user_id', $row->employee_user_id)->update($separationApplicationInsertData);
+                // update the separation application status
+                $separationApplication->update([
+                    'status' => 'Approved',
+                    'approval_status' => 1,
+                    'approve_reject_date' => date('Y-m-d'),
+                    'employee_status_updated' => 1,
+                ]);
+                // deactivate the employee from ZKBio
+                deactivateEmployeeFromDevice($row->emp_code_old == 0 ? $row->emp_code_old : $row->emp_code);
+            }
+        }
+
+        //..... Deactivate user if mentioned in the separation application [end]
+        
+
         return $result;
     }
 
@@ -861,6 +890,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
     ): array {
         if(in_array(10, $statusesForLog)){
             $outTime = $inTime;
+            $outDate = $outDate ?? $date;
             $inTime = 'NULL';
 
         }
@@ -875,7 +905,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'shift_end_time'                             => $shift->clock_out     ?? '18:00:00',
             'date'                                       => $date,
             'in_time'                                    => $inTime,
-            'out_date'                                   => $outDate ?? $date,
+            'out_date'                                   => $outDate,
             'out_time'                                   => $outTime,
             'on_leave_status'                            => null,
             'transfered_to_ot'                           => $transferedToOTStatus ? 1 : 0,
