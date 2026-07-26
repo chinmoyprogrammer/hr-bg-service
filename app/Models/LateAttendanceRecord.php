@@ -23,6 +23,8 @@ class LateAttendanceRecord extends Model
         'deleted_user_id',
         'deleted_by',
         'deleted_at',
+        'month',
+        'year',
     ];
 
     protected $hidden = [

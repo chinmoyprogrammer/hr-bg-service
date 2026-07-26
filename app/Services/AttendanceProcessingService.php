@@ -55,6 +55,7 @@ class AttendanceProcessingService
         ?array      $manualPunch = null
     ): array {
         $this->isAbsentInFirstHalf = false;
+        $this->leave_application_id = null;
         // ── Manual punch override ─────────────────────────────────────────────────
         if ($manualPunch) {
             $outDate = $manualPunch['out_date'] ?? $date;
@@ -830,13 +831,16 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         string $date, ?object $shift, ?object $first, ?object $last,
         ?Collection $leaveApplicationDetails, bool $has_halfday_leave, array &$statusesForLog
     ): void {
+        //Log::info('Before Debug SecondHalfDayStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'has_halfday_leave'=>$has_halfday_leave, 'leaveApplicationDetails'=>$leaveApplicationDetails]);
         if (
             $has_halfday_leave || !$first || !$last || !$shift ||
-            !(strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day . ' +90 minutes')) ||
+            (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day . ' +90 minutes')) ||
             !(strtotime($last->punch_datetime)  < strtotime($date . ' ' . $shift->clock_out_start_time))
         ) {
+
             return;
         }
+        //Log::info('After Debug SecondHalfDayStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'has_halfday_leave'=>$has_halfday_leave, 'leaveApplicationDetails'=>$leaveApplicationDetails]);
 
         if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 6)->contains('leave_date', $date)) {
             $this->leave_application_id = $leaveApplicationDetails->where('first_second_half', 6)->where('leave_date', $date)->first()->leave_application_id;
@@ -888,11 +892,11 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         ?object $publicHoliday, ?object $empHoliday,
         int $isJoin, string $now, float $workingHours = 0, array $statusesForLog = []
     ): array {
+        Log::info('leave id: '.$this->leave_application_id);
         if(in_array(10, $statusesForLog)){
             $outTime = $inTime;
             $outDate = $outDate ?? $date;
             $inTime = 'NULL';
-
         }
         return [
             'emp_code'                                   => $row->emp_code,
@@ -900,6 +904,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'department_id'                              => $row->department_id,
             'section_id'                                 => $row->section_id,
             'shift_id'                                   => $row->shift_id,
+            'leave_id'                                   => $this->leave_application_id ?? null,
             'shift_start_time'                           => $shift->clock_in      ?? '09:00:00',
             'shift_grace_time'                           => $shift->shift_grace_time ?? 0,
             'shift_end_time'                             => $shift->clock_out     ?? '18:00:00',
