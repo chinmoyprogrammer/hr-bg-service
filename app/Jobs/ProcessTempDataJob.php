@@ -240,6 +240,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->keyBy('id');
 
             $leaveApplicationDetails = LeaveApplicationDetail::whereBetween('leave_date', [$startDate, $endDate])
+                ->whereHas('leaveApplication', function($q) {
+                    $q->where('approval_status', 1);
+                })
                 ->get()
                 ->groupBy('employee_user_id');
 
