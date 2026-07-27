@@ -222,7 +222,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
             })
-            ->where('employee_user_id',191)
+            //->where('employee_user_id',191)
             ->get();
             // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {
