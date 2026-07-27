@@ -104,7 +104,7 @@ class AttendanceProcessingService
         Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
-        if ($row->employeeAttendanceTemps->isEmpty()) {
+        if (!$first) {
             $statusesForLog = $this->resolveAbsentStatuses(
                 $date, $leaveApplicationDetails, $publicHoliday, $empHoliday
             );
@@ -163,9 +163,11 @@ class AttendanceProcessingService
 
         $rowKey = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, $inTime, $outTime, $now);
         
+        //dd('--->>>>',$first, $last, $lastBeforeCutoff,'<<<<----');
+        Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
         $this->applyHolidayDutyStatuses(
             $row, $date, $publicHoliday, $empHoliday, $holidayDutyRequisitions,
-            $statusesForLog, $result, $now, $rowKey
+            $statusesForLog, $result, $now, $rowKey, $first
         );
 
         $this->applyIncompleteInOutStatus($row, $date, $shift, $first, $statusesForLog);
@@ -666,14 +668,14 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         ?object $publicHoliday, ?object $empHoliday,
         Collection $holidayDutyRequisitions,
         array &$statusesForLog, array &$result,
-        string $now, string $rowKey
+        string $now, string $rowKey, ?object $first
     ): void {
         $anyHoliday = $publicHoliday || $empHoliday;
         if(!$anyHoliday){
             return;
         }
         Log::warning('anyHoliday: = >'.$anyHoliday.'<');
-        if ($anyHoliday && $row->employeeAttendanceTemps->count() > 0) {
+        if ($anyHoliday && $first && $row->employeeAttendanceTemps->count() > 0) {
             $statusesForLog[] = $empHoliday ? 20 : 21; // Weekend Duty / Public Holiday Duty
             $statusesForLog[] = 14;                     // Holiday Duty
         }
