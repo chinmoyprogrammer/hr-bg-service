@@ -222,7 +222,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
             })
-            // ->where('employee_user_id',544)
+            //->where('employee_user_id',191)
             ->get();
             // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {
@@ -240,6 +240,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->keyBy('id');
 
             $leaveApplicationDetails = LeaveApplicationDetail::whereBetween('leave_date', [$startDate, $endDate])
+                ->whereHas('leaveApplication', function($q) {
+                    $q->where('approval_status', 1);
+                })
                 ->get()
                 ->groupBy('employee_user_id');
 
