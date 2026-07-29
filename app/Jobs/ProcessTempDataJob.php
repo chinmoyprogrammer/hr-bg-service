@@ -222,7 +222,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
             })
-            //->where('employee_user_id',191)
+            //->where('employee_user_id',591)
             ->get();
             // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {
@@ -323,11 +323,20 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $otRequisition   = $otRequisitions->get($row->employee_user_id);
 
                 foreach ($dates as $date) {
-                    $shiftId        = $row->shift_id ?? Shift::find(1)->id;
-                    $shift          = $shifts->get($shiftId);
+                    $shiftId        = $row->shift_id;
+                    $shift          = $shiftId ? $shifts->get($shiftId) : null;
                     $publicHoliday  = $publicHolidays->get($date);
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
-                    Log::info('empHoliday:', ['empHoliday:' => $row->employee_user_id . '|' . $date]);
+                    Log::info('ProcessTempDataJob iteration start', [
+                        'employee_user_id' => $row->employee_user_id,
+                        'emp_code' => $row->emp_code ?? null,
+                        'date' => $date,
+                        'shift_id' => $shiftId,
+                        'shift_found' => (bool) $shift,
+                        'public_holiday' => (bool) $publicHoliday,
+                        'employee_holiday' => (bool) $empHoliday,
+                    ]);
+
                     $result = app(\App\Services\AttendanceProcessingService::class)->process(
                         $row,
                         $date,
@@ -339,9 +348,23 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $empLeaveDetails
                     );
 
-                    Log::warning('ProcessTempDataJob: dates span different calendar months', ['payload' => $result]);
+                    Log::info('ProcessTempDataJob iteration result', [
+                        'employee_user_id' => $row->employee_user_id,
+                        'date' => $date,
+                        'skip' => $result['skip'] ?? null,
+                        'has_attendance' => !empty($result['attendance']),
+                        'status_log_count' => count($result['statusLogs'] ?? []),
+                        'payroll_item_count' => count($result['payrollAccruedItems'] ?? []),
+                        'leave_log_count' => count($result['leaveAchieveLogs'] ?? []),
+                        'row_key' => $result['rowKey'] ?? null,
+                    ]);
 
                     if ($result['skip']) {
+                        Log::warning('ProcessTempDataJob iteration skipped', [
+                            'employee_user_id' => $row->employee_user_id,
+                            'date' => $date,
+                            'shift_id' => $shiftId,
+                        ]);
                         continue;
                     }
 
@@ -375,8 +398,20 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
             // ── Bulk insert attendance ────────────────────────────────────────────
             if (empty($prepared)) {
+                Log::warning('ProcessTempDataJob no attendance rows prepared', [
+                    'prepared_count' => count($prepared),
+                    'status_log_count' => count($statusLogData),
+                    'payroll_item_count' => count($payrollAccruedItems),
+                    'leave_log_count' => count($leaveAchieveLogs),
+                ]);
                 return;
             }
+            Log::info('ProcessTempDataJob bulk insert starting', [
+                'prepared_count' => count($prepared),
+                'status_log_count' => count($statusLogData),
+                'payroll_item_count' => count($payrollAccruedItems),
+                'leave_log_count' => count($leaveAchieveLogs),
+            ]);
             DB::beginTransaction();
             try {
                 foreach (array_chunk($prepared, 500) as $chunk) {
@@ -397,6 +432,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $insertedRows = EmployeeAttendance::where('created_user_id', $systemUserId)
                 ->whereBetween('created_at', [$jobStart, $jobEnd])
                 ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_time', 'created_at', 'emp_code']);
+            Log::info('ProcessTempDataJob inserted attendance rows fetched', [
+                'inserted_row_count' => $insertedRows->count(),
+                'job_start' => $jobStart,
+                'job_end' => $jobEnd,
+            ]);
 
             foreach ($insertedRows as $r) {
                 $k = $r->emp_code . '|' . $r->employee_user_id . '|' . $r->date
@@ -405,18 +445,36 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $idMapByEmpDate[$r->employee_user_id . '|' . $r->date]     = $r->id;
             }
 
+            Log::info('ProcessTempDataJob idMap:', ['idMap'=>$idMap]);
+            Log::info('ProcessTempDataJob idMapByEmpDate:', ['idMapByEmpDate'=>$idMapByEmpDate]);
+
             // ── Insert status logs ────────────────────────────────────────────────
             if (!empty($statusLogData)) {
+                $unmatchedStatusLogKeys = [];
                 foreach ($statusLogKeyIndex as $k => $indices) {
                     if (isset($idMap[$k])) {
                         foreach ($indices as $idx) {
                             $statusLogData[$idx]['employee_attendance_id'] = $idMap[$k];
                         }
+                    } else {
+                        $unmatchedStatusLogKeys[] = $k;
                     }
+                }
+                if (!empty($unmatchedStatusLogKeys)) {
+                    Log::warning('ProcessTempDataJob unmatched status log keys', [
+                        'count' => count($unmatchedStatusLogKeys),
+                        'keys' => array_slice($unmatchedStatusLogKeys, 0, 20),
+                    ]);
                 }
                 foreach (array_chunk($statusLogData, 500) as $chunk) {
                     EmployeeAttendanceStatusLog::insert($chunk);
                 }
+                Log::info('ProcessTempDataJob status logs inserted', [
+                    'count' => count($statusLogData),
+                    'unmatched_key_count' => count($unmatchedStatusLogKeys),
+                ]);
+            } else {
+                Log::info('ProcessTempDataJob no status logs to insert');
             }
 
             // ── Insert payroll accrued allowances ─────────────────────────────────
@@ -434,23 +492,53 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $status = PayrollAccruedAllowanceIncome::insert($chunk);
                     //Log::warning('Payroll Allowance Income:', [$status, $chunk]);
                 }
+                Log::info('ProcessTempDataJob payroll accrued items inserted', [
+                    'count' => count($payrollAccruedItems),
+                ]);
+            } else {
+                Log::info('ProcessTempDataJob no payroll accrued items to insert');
             }
 
             // ── Insert leave achieve logs ─────────────────────────────────────────
             if (!empty($leaveAchieveLogs)) {
+                $unmatchedLeaveLogKeys = [];
                 foreach ($leaveLogKeyIndex as $k => $indices) {
                     if (isset($idMap[$k])) {
                         foreach ($indices as $idx) {
                             $leaveAchieveLogs[$idx]['employee_attendance_id'] = $idMap[$k];
                         }
+                    } else {
+                        $unmatchedLeaveLogKeys[] = $k;
                     }
+                }
+                if (!empty($unmatchedLeaveLogKeys)) {
+                    Log::warning('ProcessTempDataJob unmatched leave achieve log keys', [
+                        'count' => count($unmatchedLeaveLogKeys),
+                        'keys' => array_slice($unmatchedLeaveLogKeys, 0, 20),
+                    ]);
                 }
                 foreach (array_chunk($leaveAchieveLogs, 500) as $chunk) {
                     EmployeeLeaveAchieveLog::insert($chunk);
                 }
+                Log::info('ProcessTempDataJob leave achieve logs inserted', [
+                    'count' => count($leaveAchieveLogs),
+                    'unmatched_key_count' => count($unmatchedLeaveLogKeys),
+                ]);
+            } else {
+                Log::info('ProcessTempDataJob no leave achieve logs to insert');
             }
+            Log::info('ProcessTempDataJob completed successfully', [
+                'attendance_count' => count($prepared),
+                'status_log_count' => count($statusLogData),
+                'payroll_item_count' => count($payrollAccruedItems),
+                'leave_log_count' => count($leaveAchieveLogs),
+            ]);
         }catch(\Exception $e){
-            Log::error('ProcessTempDataJob handle failed', ['error' => $e->getMessage()]);
+            Log::error('ProcessTempDataJob handle failed', [
+                'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+            ]);
             return;
         }
     }//

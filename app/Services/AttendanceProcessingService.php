@@ -46,7 +46,7 @@ class AttendanceProcessingService
     public function process(
         object     $row,
         string     $date,
-        object    $shift,
+        ?object    $shift,
         ?object    $publicHoliday,
         ?object    $empHoliday,
         ?Collection $holidayDutyRequisitions,
@@ -76,7 +76,7 @@ class AttendanceProcessingService
             $this->source = 'manual';
         }
 
-        Log::warning('tempAtt:', ['tempAtt'=>$row->employeeAttendanceTemps]);
+        Log::warning('tempAtt:', ['tempAtt employeeAttendanceTemps:'=>$row->employeeAttendanceTemps]);
 
         $now = date('Y-m-d H:i:s');
 
@@ -88,6 +88,28 @@ class AttendanceProcessingService
             'leaveAchieveLogs'    => [],
             'skip'                => false,
         ];
+        Log::warning('shift:', ['employee shift object'=>$shift]);
+
+        if ($row->joining_date && strtotime($date) < strtotime($row->joining_date)) {
+            Log::warning('Attendance processing skipped because employee joined after this date.', [
+                'employee_user_id' => $row->employee_user_id ?? null,
+                'emp_code' => $row->emp_code ?? null,
+                'date' => $date,
+            ]);
+            $result['skip'] = true;
+            return $result;
+        }
+
+        if (!$shift) {
+            Log::warning('Attendance processing skipped because shift was not found.', [
+                'employee_user_id' => $row->employee_user_id ?? null,
+                'emp_code' => $row->emp_code ?? null,
+                'date' => $date,
+                'shift_id' => $row->shift_id ?? null,
+            ]);
+            $result['skip'] = true;
+            return $result;
+        }
 
         $statusesForLog     = [];
         $has_halfday_leave  = false;
@@ -102,7 +124,6 @@ class AttendanceProcessingService
         // ── Resolve first / last punches for this date ────────────────────────────
         [$first, $last, $lastBeforeCutoff] = $this->resolveFirstLastPunch($row, $date, $shift);
         Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
-
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if (!$first) {
             $statusesForLog = $this->resolveAbsentStatuses(
@@ -117,14 +138,18 @@ class AttendanceProcessingService
             $result['statusLogs'] = $this->buildStatusLogRows(
                 $row->employee_user_id, $date, $now, $statusesForLog
             );
+            Log::info('after buildStatusLogRows:', ['statusLogs'=>$result['statusLogs']]);
             // Still build a bare attendance row so the date is recorded
             $result['attendance'] = $this->buildAttendanceRow(
                 $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
             );
+            Log::info('after buildAttendanceRow:', ['attendance'=>$result['attendance']]);
             $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
+            Log::info('after makeRowKey:', ['rowKey'=>$result['rowKey']]);
             //Log::warning('Debug attendance:', ['attendance'=>$result['attendance']]);
             return $result;
         }
+        
 
 
         // ── Overnight shift: resolve out-date / out-time or delegate to next day ──
@@ -255,10 +280,10 @@ class AttendanceProcessingService
     // Private helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private function resolveFirstLastPunch(object $row, string $date, object $shift): array
+    private function resolveFirstLastPunch(object $row, string $date, ?object $shift): array
     {
         Log::warning('resolveFirstLastPunch:9999', ['resolveFirstLastPunch'=>$row]);
-        if ($row->employeeAttendanceTemps->isEmpty()) {
+        if (!$shift || $row->employeeAttendanceTemps->isEmpty()) {
             return [null, null, null];
         }
 Log::warning('resolveFirstLastPunch 1 :', ['resolveFirstLastPunch'=>$row]);
