@@ -161,16 +161,14 @@ class AttendanceProcessingService
         $outTime = $last  ? Carbon::parse($last->punch_datetime)->format('H:i:s')  : null;
         $outDate = $last  ? Carbon::parse($last->punch_datetime)->format('Y-m-d')  : null;
 
-        $rowKey = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, $inTime, $outTime, $now);
-        
         //dd('--->>>>',$first, $last, $lastBeforeCutoff,'<<<<----');
         Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
         $this->applyHolidayDutyStatuses(
             $row, $date, $publicHoliday, $empHoliday, $holidayDutyRequisitions,
-            $statusesForLog, $result, $now, $rowKey, $first
+            $statusesForLog, $result, $now, $first
         );
 
-        $this->applyIncompleteInOutStatus($row, $date, $shift, $first, $statusesForLog);
+        $this->applyIncompleteInOutStatus($date, $shift, $first, $last, $statusesForLog);
         $this->applyEarlyOutStatus($row, $date, $shift, $last, $shiftEnd, $statusesForLog);
 
         $has_halfday_leave = $this->applyFirstHalfDayStatus(
@@ -199,13 +197,23 @@ class AttendanceProcessingService
         // ── Join date flag ────────────────────────────────────────────────────────
         $isJoin = ($date === $row->joining_date) ? 1 : 0;
 
+        [$inTime, $outDate, $outTime] = $this->normalizeAttendanceTimes(
+            $date,
+            $inTime,
+            $outDate,
+            $outTime,
+            $statusesForLog
+        );
+
+        $rowKey = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, $inTime, $outTime, $now);
+
         // ── Assemble result ───────────────────────────────────────────────────────
         Log::info('before assemble result', [$row, $date, $shift, $inTime, $outDate, $outTime,
             $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours]);
         $result['rowKey']    = $rowKey;
         $result['attendance'] = $this->buildAttendanceRow(
             $row, $date, $shift, $inTime, $outDate, $outTime,
-            $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours, $statusesForLog
+            $transferedToOTStatus, $publicHoliday, $empHoliday, $isJoin, $now, $workingHours
         );
         $result['statusLogs'] = $this->buildStatusLogRows(
             $row->employee_user_id, $date, $now, $statusesForLog
@@ -218,8 +226,8 @@ class AttendanceProcessingService
         {
         
             //.. find the separation application
-            $separationApplication = $row->hasSeparationApplication->where('action_type', 'after_checkout')->first();
-            if (!$separationApplication != '' && $separationApplication->action_type == 'after_checkout') {
+            $separationApplication = $row->hasSeparationApplication?->where('action_type', 'after_checkout')->first();
+            if ($separationApplication?->action_type === 'after_checkout') {
                 $separationApplicationInsertData = [
                     'status' => 0,
                     'login_eligibility' => 0,
@@ -283,9 +291,27 @@ Log::warning('resolveFirstLastPunch 4 :', ['resolveFirstLastPunch'=>$row]);
             return Carbon::parse($t->punch_datetime)->format('H:i:s') >= $cutoffTime;
         })->values();
 Log::warning('resolveFirstLastPunch 5 :', ['resolveFirstLastPunch'=>$row]);
+        $checkInWindowPunches = $afterCutoff->filter(function ($t) use ($start, $end) {
+            $punchTime = Carbon::parse($t->punch_datetime);
+            return $punchTime->betweenIncluded($start, $end);
+        })->values();
+
+        $afterCheckInWindowPunches = $afterCutoff->reject(function ($t) use ($start, $end) {
+            $punchTime = Carbon::parse($t->punch_datetime);
+            return $punchTime->betweenIncluded($start, $end);
+        })->values();
+
+        $cleanedAfterCutoff = collect();
+        if ($checkInWindowPunches->isNotEmpty()) {
+            $cleanedAfterCutoff->push($checkInWindowPunches->first());
+        }
+        $cleanedAfterCutoff = $cleanedAfterCutoff
+            ->concat($afterCheckInWindowPunches)
+            ->values();
+
         $lastBeforeCutoff = $beforeCutoff->last();
-        $first = $afterCutoff->first();
-        $last = $afterCutoff->last();
+        $first = $cleanedAfterCutoff->first();
+        $last = $cleanedAfterCutoff->last();
 Log::warning('resolveFirstLastPunch 6 :', ['resolveFirstLastPunch'=>$row]);
         if (!$first && $lastBeforeCutoff) {
             $first = null;
@@ -668,7 +694,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         ?object $publicHoliday, ?object $empHoliday,
         Collection $holidayDutyRequisitions,
         array &$statusesForLog, array &$result,
-        string $now, string $rowKey, ?object $first
+        string $now, ?object $first
     ): void {
         $anyHoliday = $publicHoliday || $empHoliday;
         if(!$anyHoliday){
@@ -760,10 +786,10 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
     }
 
     private function applyIncompleteInOutStatus(
-        object $row, string $date, ?object $shift, ?object $first, array &$statusesForLog
+        string $date, ?object $shift, ?object $first, ?object $last, array &$statusesForLog
     ): void {
-        Log::warning('Debug IncompleteInOutStatus:', ['row'=>$row, 'date'=>$date, 'shift'=>$shift, 'first'=>$first]);
-        if ($row->employeeAttendanceTemps->count() !== 1 || !$shift || !$first) {
+        Log::warning('Debug IncompleteInOutStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last]);
+        if (!$shift || !$first || $last) {
             return;
         }
 
@@ -887,19 +913,30 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
     // ─── Row builders ────────────────────────────────────────────────────────
 
+    private function normalizeAttendanceTimes(
+        string $date,
+        ?string $inTime,
+        ?string $outDate,
+        ?string $outTime,
+        array $statusesForLog
+    ): array {
+        if (in_array(10, $statusesForLog, true)) {
+            $outTime = $inTime;
+            $outDate = $outDate ?? $date;
+            $inTime = null;
+        }
+
+        return [$inTime, $outDate, $outTime];
+    }
+
     private function buildAttendanceRow(
         object $row, string $date, ?object $shift,
         ?string $inTime, ?string $outDate, ?string $outTime,
         bool $transferedToOTStatus,
         ?object $publicHoliday, ?object $empHoliday,
-        int $isJoin, string $now, float $workingHours = 0, array $statusesForLog = []
+        int $isJoin, string $now, float $workingHours = 0
     ): array {
         Log::info('leave id: '.$this->leave_application_id);
-        if(in_array(10, $statusesForLog)){
-            $outTime = $inTime;
-            $outDate = $outDate ?? $date;
-            $inTime = 'NULL';
-        }
         return [
             'emp_code'                                   => $row->emp_code,
             'employee_user_id'                           => $row->employee_user_id,
