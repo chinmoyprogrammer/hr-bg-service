@@ -212,7 +212,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         date('Y-m-01', strtotime($startBoundary)),
                         date('Y-m-t',  strtotime($endBoundary)),
                     ])
-                    ->where('attendance_status', 2),
+                    ->where('attendance_status', 2)
+                    ->whereHas('attendance'),
                 'hasEarlyOutRequests' => fn($q) => $q
                     ->whereNull('deleted_at')
                     ->whereBetween('out_date', [$startBoundary, $endBoundary])
@@ -221,7 +222,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
             })
-            // ->where('employee_user_id',544)
+            //->where('employee_user_id',191)
             ->get();
             // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {
@@ -239,6 +240,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->keyBy('id');
 
             $leaveApplicationDetails = LeaveApplicationDetail::whereBetween('leave_date', [$startDate, $endDate])
+                ->whereHas('leaveApplication', function($q) {
+                    $q->where('approval_status', 1);
+                })
                 ->get()
                 ->groupBy('employee_user_id');
 
@@ -323,7 +327,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     $shift          = $shifts->get($shiftId);
                     $publicHoliday  = $publicHolidays->get($date);
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
-
+                    Log::info('empHoliday:', ['empHoliday:' => $row->employee_user_id . '|' . $date]);
                     $result = app(\App\Services\AttendanceProcessingService::class)->process(
                         $row,
                         $date,
