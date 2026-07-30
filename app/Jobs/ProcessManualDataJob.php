@@ -60,7 +60,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'employee_user_id' => (int) $item['employee_user_id'],
                 'date'             => $item['date'],
                 'in_time'          => $item['in_time']  ?? null,
-                'out_date'          => $item['out_date'],
+                'out_date'         => $item['out_date'] ?? null,
                 'out_time'         => $item['out_time'] ?? null,
                 'is_corrected'     => $item['is_corrected'] ?? 0,
                 'is_manual'        => $item['is_manual'] ?? 0,
@@ -122,6 +122,9 @@ class ProcessManualDataJob extends Job implements ShouldQueue
 
         $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $empUserIds)
             ->whereBetween('leave_date', [$startDate, $endDate])
+            ->whereHas('leaveApplication', function ($q) {
+                $q->where('approval_status', 1);
+            })
             ->get()
             ->groupBy('employee_user_id');
 
@@ -287,11 +290,13 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 continue;
             }
 
+            [$employeeUserId] = explode('|', $employeeDateKey, 2);
+
             $manualAttendanceRecords[] = [
                 'employee_attendance_id' => $employeeAttendanceId,
                 'created_at' => $jobEnd,
                 'created_by' => $systemUserId,
-                'employee_user_id' => $r->employee_user_id,
+                'employee_user_id' => (int) $employeeUserId,
             ];
         }
 
