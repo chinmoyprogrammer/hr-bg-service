@@ -52,7 +52,8 @@ class AttendanceProcessingService
         ?Collection $holidayDutyRequisitions,
         ?object    $otRequisition,
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
-        ?array      $manualPunch = null
+        ?array      $manualPunch,
+        ?string     $remarks = null,
     ): array {
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;
@@ -62,12 +63,12 @@ class AttendanceProcessingService
             $fakeTemps = collect();
             if (!empty($manualPunch['in_time'])) {
                 $fakeTemps->push((object)[
-                    'punch_datetime' => $date . ' ' . $manualPunch['in_time'],
+                    'punch_datetime' => date('Y-m-d', strtotime($date)) . ' ' . $manualPunch['in_time'],
                 ]);
             }
             if (!empty($manualPunch['out_time'])) {
                 $fakeTemps->push((object)[
-                    'punch_datetime' => $outDate . ' ' . $manualPunch['out_time'],
+                    'punch_datetime' => date('Y-m-d', strtotime($outDate)) . ' ' . $manualPunch['out_time'],
                 ]);
             }
             $row->employeeAttendanceTemps = $fakeTemps;
@@ -166,7 +167,14 @@ class AttendanceProcessingService
 
         // ── Overnight shift: resolve out-date / out-time or delegate to next day ──
         [$outDate, $outTime] = $this->resolveOutDateTime($row, $date, $shift, $first, $last);
-        Log::warning('before overnight shift', [$result]);
+        Log::warning('before overnight shift------', [$outDate, $outTime,$date, $shift, $first, $last]);
+
+        // ── Overnight checkout: update *previous* day's record and skip this date ─
+        Log::info('before handleOvernightCheckoutForNormalShift check:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
+        if ($this->handleOvernightCheckoutForNormalShift($row, $date, $shift, $first, $last, $now, $statusesForLog, $lastBeforeCutoff)) {
+            $result['skip'] = 1;
+            return $result;
+        }
         if($this->isManual==1 || $this->isCorrected==1){
             $this->handleOvernightCheckoutForNormalShiftManualOrCurrection($row,$date,$outDate,$shift,$first,$last,$statusesForLog,
             $result,$now);
@@ -276,7 +284,7 @@ class AttendanceProcessingService
         }
 
         //..... Deactivate user if mentioned in the separation application [end]
-        
+        $result['attendance']['remarks'] = $remarks;
 
         return $result;
     }

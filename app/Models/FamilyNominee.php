@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class FamilyNominee extends Model
 {
-    protected $table = 'employee_family_nominee';
+    protected $table = 'employee_family_nominees';
     protected $primaryKey = 'id';
     public $timestamps = false;
     //
