@@ -252,7 +252,7 @@ class AttendanceProcessingService
 
         //..... Deactivate user if mentioned in the separation application [start]
 
-        if(strtotime(date('Y-m-d').' '.$shift->clock_out) <= strtotime($now) && $last != null)
+        if(strtotime(date('Y-m-d').' '.$shift->clock_out) <= strtotime($now) && $last != null && $row->hasSeparationApplication != null)
         {
         
             //.. find the separation application

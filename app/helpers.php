@@ -258,3 +258,98 @@ if (!function_exists('deactivateEmployeeFromDevice'))
 
     }
 }
+
+if (!function_exists('pushNotificationToRabbitMQ'))
+{
+    function pushNotificationToRabbitMQ($userIds, string $message, ?string $queue = null, ?string $url = null )
+    {
+        $ids = [];
+        if (is_array($userIds)) {
+            $ids = $userIds;
+        } elseif (is_string($userIds)) {
+            $ids = array_filter(array_map('trim', explode(',', $userIds)));
+        } else {
+            $ids = [$userIds];
+        }
+
+        $ids = array_values(array_unique(array_map(function($v){
+            if (is_numeric($v)) { return (string) ((int) $v); }
+            return trim((string) $v);
+        }, $ids)));
+
+        $payload = [
+            'type' => 'notification',
+            'message' => $message,
+            'user_ids' => $ids,
+        ];
+        if ($url !== null && $url !== '') { $payload['url'] = $url; }
+
+        $queueName = $queue ?: env('NOTIFICATION_RABBITMQ_QUEUE', 'notification1');
+        try {
+            // $json = json_encode($payload);
+            // $connection = app('queue')->connection('rabbitmq');
+            // $connection->to($queueName)->pushRaw($json);
+                    \Illuminate\Support\Facades\Queue::connection('rabbitmq')->push(
+            new \App\Jobs\RabbitMQJob($payload, $queueName),
+            '',
+            $queueName
+        );
+            return true;
+        } catch (\Throwable $e) {
+            app('log')->error('pushNotificationToRabbitMQ failed', ['error' => $e->getMessage(), 'queue' => $queueName, 'payload' => $payload]);
+            return false;
+        }
+    }
+}
+if (!function_exists('createNotification'))
+{
+    function createNotification($message,$userId, $type=null, $pushNotification = true)
+    {
+        if (is_null($userId) && is_int($type)) {
+            $users = \App\Models\User::where('user_type_id', $type)
+            ->when($type != null, function($query) use ($type) {
+                $query->where('user_type_id', $type);
+            })
+            ->where('status', 1)
+            ->whereNull('deleted_at')
+            ->get();
+        } elseif (is_array($userId)) {
+            $users = \App\Models\User::whereIn('id', $userId)->where('status', 1)->whereNull('deleted_at')->get();
+        } else {
+            $users = \App\Models\User::where('status', 1)->where('id', $userId)->whereNull('deleted_at')->get();
+        }
+
+        $notifications = [];
+        $userIds = [];
+
+        $now = date('Y-m-d H:i:s');
+        foreach ($users as $user) {
+            $notifications[] = [
+                'user_id'           => $user->id,
+                'notification_text' => $message,
+                'status'            => 'unread',
+                'created_at'        => $now,
+                'created_user_id'   => getUserId(),
+            ];
+            $userIds[] = $user->id;
+        }
+
+        \App\Models\Notification::insert($notifications);
+
+        if ($pushNotification == true) {
+            pushNotificationToRabbitMQ($userIds, $message, 'notification1');
+        }
+
+        // $notification = new \App\Models\Notification();
+        // $notification->user_id = $userId;
+        // $notification->notification_text = $message;
+        // $notification->read_datetime = null;
+        // $notification->status = 'unread';
+        // $notification->created_at = date('Y-m-d H:i:s');
+        // $notification->created_user_id = auth()->id();
+        // $notification->save();
+
+    }
+}
+
+

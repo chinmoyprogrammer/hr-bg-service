@@ -51,9 +51,9 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         return; */
         // ── Normalise & validate each row ─────────────────────────────────────
         $validRows = [];
-        foreach ($this->payload as $item) {
-            if (empty($item['employee_user_id']) || empty($item['date'])) {
-                Log::warning('ProcessManualDataJob: skipping row with missing employee_user_id or date', ['row' => $item]);
+        foreach ($this->payload as $key => $item) {
+            if (empty($item['employee_user_id']) || empty($item['date']) || is_string($key)) {
+                Log::warning('ProcessManualDataJob: skipping row with missing employee_user_id or date', ['row' => $item, 'key' => $key]);
                 continue;
             }
             $validRows[] = [
@@ -303,8 +303,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             $manualAttendanceRecords[] = [
                 'employee_attendance_id' => $employeeAttendanceId,
                 'created_at' => $jobEnd,
-                'created_by' => $systemUserId,
-                'employee_user_id' => (int) $employeeUserId,
+                'created_by' => $this->payload['created_user_id'],
+                'employee_user_id' => $r->employee_user_id,
             ];
         }
 
