@@ -64,6 +64,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'out_time'         => $item['out_time'] ?? null,
                 'is_corrected'     => $item['is_corrected'] ?? 0,
                 'is_manual'        => $item['is_manual'] ?? 0,
+                'created_user_id'  => $item['created_user_id'] ?? 0,
+                'remarks'          => $item['remarks'] ?? null,
             ];
         }
 
@@ -210,7 +212,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $holidayDutyRequisitions,
                     $otRequisition,
                     $empLeaveDetails,
-                    $manualPunch
+                    $manualPunch,
+                    $item['remarks'] ?? null,
                 );
 
                 if ($result['skip']) {
@@ -273,13 +276,14 @@ class ProcessManualDataJob extends Job implements ShouldQueue
 
         $insertedRows = EmployeeAttendance::where('created_user_id', $systemUserId)
             ->whereBetween('created_at', [$jobStart, $jobEnd])
-            ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_time', 'created_at', 'emp_code']);
+            ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_time', 'created_at', 'emp_code','remarks']);
 
         foreach ($insertedRows as $r) {
             $k = $r->emp_code . '|' . $r->employee_user_id . '|' . $r->date
                 . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
             $idMap[$k]                                              = $r->id;
             $idMapByEmpDate[$r->employee_user_id . '|' . $r->date] = $r->id;
+            $item['remarks'] = $r->remarks ?? null;
         }
 
         foreach ($idMapByEmpDate as $employeeDateKey => $employeeAttendanceId) {
@@ -287,10 +291,12 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 continue;
             }
 
+            Log::warning('ProcessManualDataJob: payload test',[$this->payload]);
+            // dd($this->payload); 
             $manualAttendanceRecords[] = [
                 'employee_attendance_id' => $employeeAttendanceId,
                 'created_at' => $jobEnd,
-                'created_by' => $this->payload['created_user_id'],
+                'created_by' => $this->payload[0]['created_user_id'],
                 'employee_user_id' => $r->employee_user_id,
             ];
         }
