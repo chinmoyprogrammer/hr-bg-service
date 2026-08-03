@@ -60,7 +60,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'employee_user_id' => (int) $item['employee_user_id'],
                 'date'             => $item['date'],
                 'in_time'          => $item['in_time']  ?? null,
-                'out_date'          => $item['out_date'],
+                'out_date'         => $item['out_date'] ?? null,
                 'out_time'         => $item['out_time'] ?? null,
                 'is_corrected'     => $item['is_corrected'] ?? 0,
                 'is_manual'        => $item['is_manual'] ?? 0,
@@ -111,8 +111,16 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 ->whereNull('deleted_at')
                 ->whereBetween('out_date', [$startBoundary, $endBoundary])
                 ->where('approval_status', 1),
+            'hasRosterAssignment' => fn($q) => $q
+                ->whereBetween('from_date', [$startBoundary, $endBoundary])
+                ->whereHas('roster', fn($q) =>
+                    $q->where('deleted_at', null)
+                )
         ])
         ->whereIn('employee_user_id', $empUserIds)
+        ->where(function ($q) use ($endDate) {
+                $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
+        })
         ->get();
 
         $shifts = Shift::where('effective_date', '<=', $startDate)
@@ -122,6 +130,9 @@ class ProcessManualDataJob extends Job implements ShouldQueue
 
         $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $empUserIds)
             ->whereBetween('leave_date', [$startDate, $endDate])
+            ->whereHas('leaveApplication', function ($q) {
+                $q->where('approval_status', 1);
+            })
             ->get()
             ->groupBy('employee_user_id');
 
@@ -286,6 +297,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             if (!isset($manualPunchMap[$employeeDateKey])) {
                 continue;
             }
+
+            [$employeeUserId] = explode('|', $employeeDateKey, 2);
 
             $manualAttendanceRecords[] = [
                 'employee_attendance_id' => $employeeAttendanceId,
