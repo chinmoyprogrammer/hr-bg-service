@@ -218,9 +218,16 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     ->whereNull('deleted_at')
                     ->whereBetween('out_date', [$startBoundary, $endBoundary])
                     ->where('approval_status', 1),
+                'hasRosterAssignment' => fn($q) => $q
+                    ->whereBetween('from_date', [$startBoundary, $endBoundary])
+                    ->whereHas('roster', fn($q) =>
+                        $q->where('deleted_at', null)
+                    )
             ])
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
+            })->where(function ($q) use ($endDate) {
+                $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
             })
             //->where('employee_user_id',591)
             ->get();

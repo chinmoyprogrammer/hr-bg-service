@@ -111,8 +111,16 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 ->whereNull('deleted_at')
                 ->whereBetween('out_date', [$startBoundary, $endBoundary])
                 ->where('approval_status', 1),
+            'hasRosterAssignment' => fn($q) => $q
+                ->whereBetween('from_date', [$startBoundary, $endBoundary])
+                ->whereHas('roster', fn($q) =>
+                    $q->where('deleted_at', null)
+                )
         ])
         ->whereIn('employee_user_id', $empUserIds)
+        ->where(function ($q) use ($endDate) {
+                $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
+        })
         ->get();
 
         $shifts = Shift::where('effective_date', '<=', $startDate)

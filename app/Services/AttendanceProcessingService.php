@@ -982,6 +982,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         int $isJoin, string $now, float $workingHours = 0
     ): array {
         Log::info('leave id: '.$this->leave_application_id);
+        $rosterId = $row->hasRosterAssignment?->first()?->roster_id ?? null;
         return [
             'emp_code'                                   => $row->emp_code,
             'employee_user_id'                           => $row->employee_user_id,
@@ -1001,6 +1002,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'is_holiday'                                 => ($publicHoliday || $empHoliday) ? 1 : 0,
             'is_join'                                    => $isJoin,
             'is_manual'                                  => $this->isManual,
+            'is_roster'                                  => $rosterId ? 1 : 0,
+            'roster_id'                                  => $rosterId,
             'absent_bridge'                              => 0,
             'source'                                     => $this->source,
             'is_corrected'                               => $this->isCorrected,
