@@ -52,7 +52,8 @@ class AttendanceProcessingService
         ?Collection $holidayDutyRequisitions,
         ?object    $otRequisition,
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
-        ?array      $manualPunch = null
+        ?array      $manualPunch,
+        ?string     $remarks = null,
     ): array {
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;
@@ -62,12 +63,12 @@ class AttendanceProcessingService
             $fakeTemps = collect();
             if (!empty($manualPunch['in_time'])) {
                 $fakeTemps->push((object)[
-                    'punch_datetime' => $date . ' ' . $manualPunch['in_time'],
+                    'punch_datetime' => date('Y-m-d', strtotime($date)) . ' ' . $manualPunch['in_time'],
                 ]);
             }
             if (!empty($manualPunch['out_time'])) {
                 $fakeTemps->push((object)[
-                    'punch_datetime' => $outDate . ' ' . $manualPunch['out_time'],
+                    'punch_datetime' => date('Y-m-d', strtotime($outDate)) . ' ' . $manualPunch['out_time'],
                 ]);
             }
             $row->employeeAttendanceTemps = $fakeTemps;
@@ -124,6 +125,18 @@ class AttendanceProcessingService
         // ── Resolve first / last punches for this date ────────────────────────────
         [$first, $last, $lastBeforeCutoff] = $this->resolveFirstLastPunch($row, $date, $shift);
         Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
+        $handledPreviousDayCheckout = $this->handleOvernightCheckoutForNormalShift(
+            $row,
+            $date,
+            $now,
+            $lastBeforeCutoff
+        );
+
+        if ($handledPreviousDayCheckout && !$first) {
+            $result['skip'] = true;
+            return $result;
+        }
+
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if (!$first) {
             $statusesForLog = $this->resolveAbsentStatuses(
@@ -154,7 +167,7 @@ class AttendanceProcessingService
 
         // ── Overnight shift: resolve out-date / out-time or delegate to next day ──
         [$outDate, $outTime] = $this->resolveOutDateTime($row, $date, $shift, $first, $last);
-        Log::warning('before overnight shift', [$result]);
+        Log::warning('before overnight shift------', [$outDate, $outTime,$date, $shift, $first, $last]);
 
         // ── Overnight checkout: update *previous* day's record and skip this date ─
         Log::info('before handleOvernightCheckoutForNormalShift check:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
@@ -271,7 +284,7 @@ class AttendanceProcessingService
         }
 
         //..... Deactivate user if mentioned in the separation application [end]
-        
+        $result['attendance']['remarks'] = $remarks;
 
         return $result;
     }
@@ -398,48 +411,63 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
     /**
      * Handle the edge case where an overnight punch from a *normal* shift
-     * belongs to the previous day. Updates the previous day's record and
-     * returns true to signal "skip current date".
+     * belongs to the previous day. Returns true when the previous day was updated.
      */
     private function handleOvernightCheckoutForNormalShift( 
-        object $row, string $date, ?object $shift,
-        ?object $first, ?object $last, string $now, array &$statusesForLog, $lastBeforeCutoff 
+        object $row,
+        string $date,
+        string $now,
+        ?object $lastBeforeCutoff
     ): bool {
-        //Log::warning('test before:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) . '<=' . strtotime($first->punch_datetime)]);
         Log::warning('handleOvernightCheckoutForNormalShift --- :', ['lastBeforeCutoff'=>$lastBeforeCutoff]);
-        if (
-            // !$first || !$shift || $shift->is_overnight == 1 || !$first->punch_datetime ||
-            // (strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime))
-            $lastBeforeCutoff == null
-        ) {
+        if ($lastBeforeCutoff == null) {
             Log::info('it is not an overnight checkout');
             return false;
         }
-
-        //Log::warning('test after:', ['first'=>$first, '$shift'=>$shift, 'str'=>strtotime($date . ' ' . $shift->start_check_in_time) <= strtotime($first->punch_datetime)]);
 
         $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
             ->where('date', date('Y-m-d', strtotime($date . ' -1 day')))
             ->whereNotNull('in_time')
             ->first();
 
-        if ($prevAttendance && ($this->isManual==0 && $this->isCorrected==0)) {
-            $prevAttendance->update([
-                'out_time' => date('H:i:s', strtotime($lastBeforeCutoff->punch_datetime)),
-                'out_date' => date('Y-m-d', strtotime($lastBeforeCutoff->punch_datetime)),
-            ]);
+        if (!$prevAttendance) {
+            return false;
+        }
+
+        $prevAttendance->update([
+            'out_time' => date('H:i:s', strtotime($lastBeforeCutoff->punch_datetime)),
+            'out_date' => date('Y-m-d', strtotime($lastBeforeCutoff->punch_datetime)),
+        ]);
+
+        $hasNightCheckoutStatus = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
+            ->where('attendance_status', 13)
+            ->where('attendance_date', $date)
+            ->exists();
+
+        if (!$hasNightCheckoutStatus) {
+            EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
+                ->where('attendance_status', 11)
+                ->delete();
+
             EmployeeAttendanceStatusLog::insert([
                 'employee_user_id'       => $row->employee_user_id,
                 'employee_attendance_id' => $prevAttendance->id,
                 'leave_application_id'   => null,
-                'attendance_status'      => 12, // Night Duty (checkout)
+                'attendance_status'      => 13, // Over Night Duty
                 'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now,
             ]);
+        }
+
+        $hasNightAllowance = PayrollAccruedAllowanceIncome::where('employee_attendance_id', $prevAttendance->id)
+            ->where('type', 6)
+            ->where('date', $date)
+            ->exists();
+
+        if (!$hasNightAllowance) {
             $amount = ($row->gross_salary / date('t')) * 1;
-            PayrollAccruedAllowanceIncome::insert(
-                [
+            PayrollAccruedAllowanceIncome::insert([
                 'employee_user_id'       => $row->employee_user_id,
                 'employee_attendance_id' => $prevAttendance->id,
                 'amount'                 => $amount,
@@ -449,12 +477,10 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
                 'date'                   => $date,
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now,
-                ]
-            );
-        }else{
-            return false;
+            ]);
         }
-        return false;
+
+        return true;
     }
 
     /*
@@ -465,7 +491,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
     private function handleOvernightCheckoutForNormalShiftManualOrCurrection(
         object $row,
         string $date,
-        string $outDate,
+        ?string $outDate,
         ?object $shift,
         ?object $first,
         ?object $last,
@@ -476,6 +502,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         if (
             ($this->isManual == 0 && $this->isCorrected == 0) ||
             !$first ||
+            !$last ||
+            !$outDate ||
             !$shift ||
             $shift->is_overnight != 0 ||
             !$first->punch_datetime ||
@@ -485,8 +513,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         }
         Log::info('handleOvernightCheckoutForNormalShiftManualOrCurrection');
 
-        if (!in_array(12, $statusesForLog, true)) {
-            $statusesForLog[] = 12; // Night Duty (checkout)
+        if (!in_array(13, $statusesForLog, true)) {
+            $statusesForLog[] = 13; // Over Night Duty
         }
 
         $result['payrollAccruedItems'][] = [
@@ -558,7 +586,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
                 'employee_user_id'       => $row->employee_user_id,
                 'employee_attendance_id' => $prevAttendance->id,
                 'leave_application_id'   => null,
-                'attendance_status'      => 13, // Night Duty confirmed
+                'attendance_status'      => 12, // Night Duty (checkout)
                 'attendance_date'        => $date,
                 'created_user_id'        => $this->systemUserId,
                 'created_at'             => $now
@@ -962,6 +990,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         int $isJoin, string $now, float $workingHours = 0
     ): array {
         Log::info('leave id: '.$this->leave_application_id);
+        $rosterId = $row->hasRosterAssignment?->first()?->roster_id ?? null;
         return [
             'emp_code'                                   => $row->emp_code,
             'employee_user_id'                           => $row->employee_user_id,
@@ -981,6 +1010,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'is_holiday'                                 => ($publicHoliday || $empHoliday) ? 1 : 0,
             'is_join'                                    => $isJoin,
             'is_manual'                                  => $this->isManual,
+            'is_roster'                                  => $rosterId ? 1 : 0,
+            'roster_id'                                  => $rosterId,
             'absent_bridge'                              => 0,
             'source'                                     => $this->source,
             'is_corrected'                               => $this->isCorrected,

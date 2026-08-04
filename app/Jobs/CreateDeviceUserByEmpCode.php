@@ -74,6 +74,10 @@ class CreateDeviceUserByEmpCode extends Job implements ShouldQueue
         ));
 
         $created = $http->post($employeesUrl, $payload);
+        Log::info('CreateDeviceUserByEmpCode: create payload = ' . json_encode($payload));
+        Log::info('CreateDeviceUserByEmpCode: create response = ' . $created->body());
+        Log::info('CreateDeviceUserByEmpCode: create status = ' . $created->status());
+        Log::info('CreateDeviceUserByEmpCode: create response = ' . $created->body());
         if (!$created->successful()) {
             Log::error('CreateDeviceUserByEmpCode: create failed.', [
                 'emp_code' => $empCode,
