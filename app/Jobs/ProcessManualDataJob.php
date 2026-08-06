@@ -65,9 +65,12 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'is_corrected'     => $item['is_corrected'] ?? 0,
                 'is_manual'        => $item['is_manual'] ?? 0,
                 'created_user_id'  => $item['created_user_id'] ?? 0,
-                'remarks'          => $item['remarks'] ?? null,
+                'remarks'          => $item['remarks'] ?? null
             ];
         }
+        Log::info('validRows:', ['validRows'=>$validRows]);
+        //dd($validRows);
+
 
         if (empty($validRows)) {
             Log::warning('ProcessManualDataJob: no valid rows after validation');
@@ -212,8 +215,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
 
-                //Log::warning('manual:', ['manualPunch'=>$manualPunch]);
-
+                Log::warning('manual:', ['manualPunch'=>$manualPunch]);
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
                     $row,
                     $date,
@@ -224,7 +226,6 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $otRequisition,
                     $empLeaveDetails,
                     $manualPunch,
-                    $item['remarks'] ?? null,
                 );
 
                 if ($result['skip']) {
@@ -287,14 +288,13 @@ class ProcessManualDataJob extends Job implements ShouldQueue
 
         $insertedRows = EmployeeAttendance::where('created_user_id', $systemUserId)
             ->whereBetween('created_at', [$jobStart, $jobEnd])
-            ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_time', 'created_at', 'emp_code','remarks']);
+            ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_time', 'created_at', 'emp_code']);
 
         foreach ($insertedRows as $r) {
             $k = $r->emp_code . '|' . $r->employee_user_id . '|' . $r->date
                 . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
             $idMap[$k]                                              = $r->id;
             $idMapByEmpDate[$r->employee_user_id . '|' . $r->date] = $r->id;
-            $item['remarks'] = $r->remarks ?? null;
         }
 
         foreach ($idMapByEmpDate as $employeeDateKey => $employeeAttendanceId) {
@@ -307,7 +307,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             $manualAttendanceRecords[] = [
                 'employee_attendance_id' => $employeeAttendanceId,
                 'created_at' => $jobEnd,
-                'created_by' => $this->payload[0]['created_user_id'],
+                'created_by' => $this->payload[0]['created_user_id'] ?? 0,
                 'employee_user_id' => $r->employee_user_id,
             ];
         }

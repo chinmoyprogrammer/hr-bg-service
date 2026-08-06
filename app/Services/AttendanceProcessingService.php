@@ -22,6 +22,7 @@ class AttendanceProcessingService
     private bool $isManual;
     private bool $isCorrected;
     private string $source;
+    private ?string $remarks;
     private bool $isAbsentInFirstHalf;
     private ?int $leave_application_id;
 
@@ -31,6 +32,7 @@ class AttendanceProcessingService
         $this->isManual = 0;
         $this->isCorrected = 0;
         $this->source = 'biometric';
+        $this->remarks = null;
     }
 
     /**
@@ -74,6 +76,7 @@ class AttendanceProcessingService
             $this->isManual = $manualPunch['is_manual'] ?? 0;
             $this->isCorrected = $manualPunch['is_corrected'] ?? 0;
             $this->source = 'manual';
+            $this->remarks = $manualPunch['remarks'] ?? null;
         }
 
         Log::warning('tempAtt:', ['tempAtt employeeAttendanceTemps:'=>$row->employeeAttendanceTemps]);
@@ -1013,7 +1016,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'updated_user_id'                            => $this->systemUserId,
             'deleted_user_id'                            => null,
             'created_at'                                 => $now,
-        ];
+            'remarks'                                    => $this->remarks,
+        ];   
     }
 
     private function buildStatusLogRows(
