@@ -330,8 +330,15 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $otRequisition   = $otRequisitions->get($row->employee_user_id);
 
                 foreach ($dates as $date) {
-                    $shiftId        = $row->shift_id;
-                    $shift          = $shiftId ? $shifts->get($shiftId) : null;
+                    //check roster assignment exist on date = from_date
+                    $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+                    if($rosterAssignment){
+                        $shiftId = $rosterAssignment->shift_id;
+                        $shift   = Shift::find($shiftId);
+                    }else{
+                        $shiftId = $row->shift_id;
+                        $shift   = $shiftId ? $shifts->get($shiftId) : null;
+                    }
                     $publicHoliday  = $publicHolidays->get($date);
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                     Log::info('ProcessTempDataJob iteration start', [
@@ -419,7 +426,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 'payroll_item_count' => count($payrollAccruedItems),
                 'leave_log_count' => count($leaveAchieveLogs),
             ]);
-            DB::beginTransaction();
             try {
                 foreach (array_chunk($prepared, 500) as $chunk) {
                     EmployeeAttendance::insert($chunk);

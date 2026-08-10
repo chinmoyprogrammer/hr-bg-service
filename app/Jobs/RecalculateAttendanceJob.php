@@ -17,6 +17,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+
 class RecalculateAttendanceJob extends Job implements ShouldQueue
 {
     use InteractsWithQueue, Queueable, SerializesModels;
