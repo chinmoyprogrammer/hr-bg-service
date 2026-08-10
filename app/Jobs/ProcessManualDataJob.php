@@ -209,6 +209,15 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             );
 
             foreach ($empDates as $date) {
+                //check roster assignment exist on date = from_date
+                $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+                if($rosterAssignment){
+                    $shiftId = $rosterAssignment->shift_id;
+                    $shift   = Shift::find($shiftId);
+                }else{
+                    $shiftId = $row->shift_id;
+                    $shift   = $shiftId ? $shifts->get($shiftId) : null;
+                }
                 $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
                 $shiftId       = $row->shift_id ?? Shift::find(1)->id;
                 $shift         = $shifts->get($shiftId);
