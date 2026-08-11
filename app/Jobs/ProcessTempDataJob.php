@@ -241,7 +241,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             
             //208, 395, ->where('employee_user_id','=', 208)
 
-            $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)
+            $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
                 ->orderBy('effective_date', 'desc')
                 ->get()
                 ->keyBy('id');
@@ -332,13 +332,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 foreach ($dates as $date) {
                     //check roster assignment exist on date = from_date
                     $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
-                    if($rosterAssignment){
+                    if($rosterAssignment && $rosterAssignment->shift_id){
                         $shiftId = $rosterAssignment->shift_id;
-                        $shift   = Shift::find($shiftId);
                     }else{
-                        $shiftId = $row->shift_id;
-                        $shift   = $shiftId ? $shifts->get($shiftId) : null;
+                        $shiftId = $row->actual_shift_id;
                     }
+                    $shift   = $shiftId ? $shifts->get($shiftId) : null;
                     $publicHoliday  = $publicHolidays->get($date);
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                     Log::info('ProcessTempDataJob iteration start', [
