@@ -134,10 +134,10 @@ class AttendanceProcessingService
             $lastBeforeCutoff
         );
 
-        if ($handledPreviousDayCheckout && !$first) {
+        /* if ($handledPreviousDayCheckout && !$first) {
             $result['skip'] = true;
             return $result;
-        }
+        } */
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if (!$first) {
