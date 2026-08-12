@@ -134,10 +134,10 @@ class AttendanceProcessingService
             $lastBeforeCutoff
         );
 
-        if ($handledPreviousDayCheckout && !$first) {
+        /* if ($handledPreviousDayCheckout && !$first) {
             $result['skip'] = true;
             return $result;
-        }
+        } */
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if (!$first) {
@@ -315,34 +315,14 @@ Log::warning('resolveFirstLastPunch 2 :', ['resolveFirstLastPunch'=>$row]);
          Log::warning('resolveFirstLastPunch 3 :', ['resolveFirstLastPunch'=>$row]);
 
         $cutoffTime = $shift->start_check_in_time;
-        $nextDate = Carbon::parse($date)->addDay()->toDateString();
 
-        // Keep punch resolution scoped to the processing date so another day's
-        // punches cannot suppress the current day's attendance creation.
-        $currentDateTemps = $temps->filter(function ($t) use ($date) {
-            return Carbon::parse($t->punch_datetime)->toDateString() === $date;
-        })->values();
-
-        // Manual/corrected entries may intentionally carry the checkout punch on
-        // the next day before the normal shift cutoff.
-        $manualNextDateBeforeCutoff = collect();
-        if ($this->isManual == 1 || $this->isCorrected == 1) {
-            $manualNextDateBeforeCutoff = $temps->filter(function ($t) use ($nextDate, $cutoffTime) {
-                $punch = Carbon::parse($t->punch_datetime);
-                return $punch->toDateString() === $nextDate
-                    && $punch->format('H:i:s') < $cutoffTime;
-            })->values();
-        }
-
-        $beforeCutoff = $currentDateTemps->filter(function ($t) use ($cutoffTime) {
+        $beforeCutoff = $temps->filter(function ($t) use ($cutoffTime) {
             return Carbon::parse($t->punch_datetime)->format('H:i:s') < $cutoffTime;
         })->values();
 Log::warning('resolveFirstLastPunch 4 :', ['resolveFirstLastPunch'=>$row]);
-        $afterCutoff = $currentDateTemps->filter(function ($t) use ($cutoffTime) {
+        $afterCutoff = $temps->filter(function ($t) use ($cutoffTime) {
             return Carbon::parse($t->punch_datetime)->format('H:i:s') >= $cutoffTime;
-        })->concat($manualNextDateBeforeCutoff)
-          ->sortBy('punch_datetime')
-          ->values();
+        })->values();
 Log::warning('resolveFirstLastPunch 5 :', ['resolveFirstLastPunch'=>$row]);
         $checkInWindowPunches = $afterCutoff->filter(function ($t) use ($start, $end) {
             $punchTime = Carbon::parse($t->punch_datetime);
