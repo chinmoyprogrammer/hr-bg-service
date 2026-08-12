@@ -128,10 +128,10 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         })
         ->get();
 
-        $shifts = Shift::where('effective_date', '<=', $startDate)
-            ->orderBy('effective_date', 'desc')
-            ->get()
-            ->keyBy('id');
+        $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
+                ->orderBy('effective_date', 'desc')
+                ->get()
+                ->keyBy('id');
 
         $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $empUserIds)
             ->whereBetween('leave_date', [$startDate, $endDate])
@@ -213,14 +213,11 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
                 if($rosterAssignment){
                     $shiftId = $rosterAssignment->shift_id;
-                    $shift   = Shift::find($shiftId);
                 }else{
-                    $shiftId = $row->shift_id;
-                    $shift   = $shiftId ? $shifts->get($shiftId) : null;
+                    $shiftId = $row->actual_shift_id;
                 }
+                $shift   = $shiftId ? $shifts->get($shiftId) : null;
                 $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
-                $shiftId       = $row->shift_id ?? Shift::find(1)->id;
-                $shift         = $shifts->get($shiftId);
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
 
