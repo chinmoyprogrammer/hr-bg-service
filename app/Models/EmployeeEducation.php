@@ -47,4 +47,34 @@ class EmployeeEducation extends Model
     {
         return $this->belongsTo(Employee::class, 'employee_id');
     }
+    /**
+     * Get the education level that owns the education record.
+     */
+    public function educationLevel()
+    {
+        return $this->belongsTo(EducationLevel::class, 'level');
+    }
+
+    //exam
+    // table : exam_name
+    public function exam()
+    {
+        return $this->belongsTo(ExamDegreeTitle::class, 'exam_name');
+    }
+
+    //boardUniversity
+    // table : board_university
+    public function boardUniversity()
+    {
+        return $this->belongsTo(EducationBoardUniversity::class, 'board_university');
+    }
+
+    //groupSubject
+    // table : group_subject
+    public function groupSubject()
+    {
+        return $this->belongsTo(EducationGroupSubject::class, 'group_subject_id');
+    }
+
+
 }

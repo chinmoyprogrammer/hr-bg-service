@@ -16,17 +16,12 @@ class EducationLevel extends Model
         'name_bn',
         'status',
         'is_draft',
+        'edu_order',
         'created_user_id',
         'updated_user_id',
         'deleted_by',
         'child_data_identifier_key_incoming',
         'child_data_identifier_key_outgoing'
-    ];
-
-    protected $casts = [
-        'status' => 'boolean',
-        'is_draft' => 'boolean',
-        'child_data_identifier_key_outgoing' => 'datetime'
     ];
 
     // Relationships
