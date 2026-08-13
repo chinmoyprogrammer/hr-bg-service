@@ -296,13 +296,8 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                  'employeeSkills.skill'=>function($query){
                     $query->whereNull('deleted_by')->whereNull('deleted_at');
                 },
-                'employeeEducations'=>function($query){
-                    $query->whereNull('employee_educations.deleted_by')->whereNull('employee_educations.deleted_at')
-                    ->leftJoin('education_levels','employee_educations.level','education_levels.id')
-                    ->orderBy('education_levels.edu_order','asc');
-                },
                  'employeeEducations.educationLevel'=>function($query){
-                    $query->whereNull('deleted_by')->whereNull('deleted_at')->orderBy('education_levels.edu_order','asc');
+                    $query->whereNull('deleted_by')->whereNull('deleted_at')->orderBy('edu_order','asc');
                 },
                  'employeeEducations.exam'=>function($query){
                     $query->whereNull('deleted_by')->whereNull('deleted_at');
@@ -385,6 +380,7 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                     $mediaKeys[] = $basic . "_passport_no_image";
                     $mediaKeys[] = $basic . "_driving_license_image";
                     $mediaKeys[] = $basic . "_tin_no_image";
+                    $mediaKeys[] = $basic . "_cv_file";
                 }
                 foreach (($data->employeeEducations ?? []) as $education) {
                     if ($education->child_data_identifier_key_outgoing) {
@@ -450,6 +446,7 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                 $data->birth_certificate_no_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_birth_certificate_no_image");
                 $data->passport_no_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_passport_no_image");
                 $data->driving_license_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_driving_license_image");
+                $data->cv_file = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_cv_file");
                 $data->tin_no_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_tin_no_image");
 
                 // Append academic_certificate_file to each education row

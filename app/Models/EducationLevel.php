@@ -24,12 +24,6 @@ class EducationLevel extends Model
         'child_data_identifier_key_outgoing'
     ];
 
-    protected $casts = [
-        'status' => 'boolean',
-        'is_draft' => 'boolean',
-        'child_data_identifier_key_outgoing' => 'datetime'
-    ];
-
     // Relationships
     public function creator()
     {
