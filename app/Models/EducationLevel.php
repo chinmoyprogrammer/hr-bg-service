@@ -16,6 +16,7 @@ class EducationLevel extends Model
         'name_bn',
         'status',
         'is_draft',
+        'edu_order',
         'created_user_id',
         'updated_user_id',
         'deleted_by',

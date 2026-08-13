@@ -2,14 +2,6 @@
 
 namespace App\Jobs;
 
-use Carbon\Carbon;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use App\Models\BankBranch;
 use App\Models\BankName;
 use App\Models\Branch;
@@ -25,6 +17,7 @@ use App\Models\EmployeeOfficialInformation;
 use App\Models\EmployeeType;
 use App\Models\Gender;
 use App\Models\LeaveHead;
+use App\Models\MediaUploadUsage;
 use App\Models\MfsList;
 use App\Models\Occupation;
 use App\Models\PhoneNumber;
@@ -34,8 +27,16 @@ use App\Models\Subsection;
 use App\Models\Upazila;
 use App\Models\User;
 use App\Models\UserStatusNSettings;
+use Carbon\Carbon;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Http\Request;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 
 class CacheRegenerateJob extends Job implements ShouldQueue
@@ -295,8 +296,13 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                  'employeeSkills.skill'=>function($query){
                     $query->whereNull('deleted_by')->whereNull('deleted_at');
                 },
+                'employeeEducations'=>function($query){
+                    $query->whereNull('employee_educations.deleted_by')->whereNull('employee_educations.deleted_at')
+                    ->leftJoin('education_levels','employee_educations.level','education_levels.id')
+                    ->orderBy('education_levels.edu_order','asc');
+                },
                  'employeeEducations.educationLevel'=>function($query){
-                    $query->whereNull('deleted_by')->whereNull('deleted_at')->orderBy('edu_order','asc');
+                    $query->whereNull('deleted_by')->whereNull('deleted_at')->orderBy('education_levels.edu_order','asc');
                 },
                  'employeeEducations.exam'=>function($query){
                     $query->whereNull('deleted_by')->whereNull('deleted_at');
