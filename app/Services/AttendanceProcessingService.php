@@ -56,6 +56,7 @@ class AttendanceProcessingService
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
         ?array      $manualPunch = null
     ): array {
+        Log::info('Attendance processing started for employee:', ['employee_user_id' => $row->employee_user_id, 'date' => $date]);
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;
         // ── Manual punch override ─────────────────────────────────────────────────
@@ -108,7 +109,7 @@ class AttendanceProcessingService
                 'employee_user_id' => $row->employee_user_id ?? null,
                 'emp_code' => $row->emp_code ?? null,
                 'date' => $date,
-                'shift_id' => $row->shift_id ?? null,
+                'shift_id' => $shift->id ?? null,
             ]);
             $result['skip'] = true;
             return $result;
@@ -435,7 +436,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
      * Handle the edge case where an overnight punch from a *normal* shift
      * belongs to the previous day. Returns true when the previous day was updated.
      */
-    private function handleOvernightCheckoutForNormalShift( 
+    private function handleOvernightCheckoutForNormalShift(
         object $row,
         string $date,
         string $now,
@@ -1018,7 +1019,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'employee_user_id'                           => $row->employee_user_id,
             'department_id'                              => $row->department_id,
             'section_id'                                 => $row->section_id,
-            'shift_id'                                   => $row->shift_id,
+            'shift_id'                                   => $shift->id ?? null,
             'leave_id'                                   => $this->leave_application_id ?? null,
             'shift_start_time'                           => $shift->clock_in      ?? '09:00:00',
             'shift_grace_time'                           => $shift->shift_grace_time ?? 0,
