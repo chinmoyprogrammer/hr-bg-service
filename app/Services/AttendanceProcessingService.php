@@ -401,6 +401,33 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             return [17]; // Weekend / employee-specific holiday absent
         }
 
+        // ── Half-day combinations (employee has NO punches on this day) ──
+        if ($leaveApplicationDetails) {
+            $hasFirstHalfLeave  = $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date);
+            $hasSecondHalfLeave = $leaveApplicationDetails->where('first_second_half', 6)->contains('leave_date', $date);
+
+            $firstLeaveRow  = $leaveApplicationDetails->where('first_second_half', 4)->where('leave_date', $date)->first();
+            $secondLeaveRow = $leaveApplicationDetails->where('first_second_half', 6)->where('leave_date', $date)->first();
+
+            // Case 1: First-half leave (4) + second-half absent (5)
+            if ($hasFirstHalfLeave && !$hasSecondHalfLeave) {
+                $this->leave_application_id = $firstLeaveRow?->leave_application_id;
+                return [4, 5];
+            }
+
+            // Case 2: Second-half leave (6) + first-half absent (3)
+            if (!$hasFirstHalfLeave && $hasSecondHalfLeave) {
+                $this->leave_application_id = $secondLeaveRow?->leave_application_id;
+                return [3, 6];
+            }
+
+            // Case 3: Both halves approved leave (should be rare, 8 covers most, but safe-guard)
+            if ($hasFirstHalfLeave && $hasSecondHalfLeave) {
+                $this->leave_application_id = $firstLeaveRow?->leave_application_id ?? $secondLeaveRow?->leave_application_id;
+                return [4, 6];
+            }
+        }
+
         return [0]; // Absent
     }
 
