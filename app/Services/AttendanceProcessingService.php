@@ -56,6 +56,7 @@ class AttendanceProcessingService
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
         ?array      $manualPunch = null
     ): array {
+        Log::info('Attendance processing started for employee:', ['employee_user_id' => $row->employee_user_id, 'date' => $date]);
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;
         // ── Manual punch override ─────────────────────────────────────────────────
@@ -108,7 +109,7 @@ class AttendanceProcessingService
                 'employee_user_id' => $row->employee_user_id ?? null,
                 'emp_code' => $row->emp_code ?? null,
                 'date' => $date,
-                'shift_id' => $row->shift_id ?? null,
+                'shift_id' => $shift->id ?? null,
             ]);
             $result['skip'] = true;
             return $result;
@@ -401,6 +402,33 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             return [17]; // Weekend / employee-specific holiday absent
         }
 
+        // ── Half-day combinations (employee has NO punches on this day) ──
+        if ($leaveApplicationDetails) {
+            $hasFirstHalfLeave  = $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date);
+            $hasSecondHalfLeave = $leaveApplicationDetails->where('first_second_half', 6)->contains('leave_date', $date);
+
+            $firstLeaveRow  = $leaveApplicationDetails->where('first_second_half', 4)->where('leave_date', $date)->first();
+            $secondLeaveRow = $leaveApplicationDetails->where('first_second_half', 6)->where('leave_date', $date)->first();
+
+            // Case 1: First-half leave (4) + second-half absent (5)
+            if ($hasFirstHalfLeave && !$hasSecondHalfLeave) {
+                $this->leave_application_id = $firstLeaveRow?->leave_application_id;
+                return [4, 5];
+            }
+
+            // Case 2: Second-half leave (6) + first-half absent (3)
+            if (!$hasFirstHalfLeave && $hasSecondHalfLeave) {
+                $this->leave_application_id = $secondLeaveRow?->leave_application_id;
+                return [3, 6];
+            }
+
+            // Case 3: Both halves approved leave (should be rare, 8 covers most, but safe-guard)
+            if ($hasFirstHalfLeave && $hasSecondHalfLeave) {
+                $this->leave_application_id = $firstLeaveRow?->leave_application_id ?? $secondLeaveRow?->leave_application_id;
+                return [4, 6];
+            }
+        }
+
         return [0]; // Absent
     }
 
@@ -408,7 +436,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
      * Handle the edge case where an overnight punch from a *normal* shift
      * belongs to the previous day. Returns true when the previous day was updated.
      */
-    private function handleOvernightCheckoutForNormalShift( 
+    private function handleOvernightCheckoutForNormalShift(
         object $row,
         string $date,
         string $now,
@@ -991,7 +1019,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             'employee_user_id'                           => $row->employee_user_id,
             'department_id'                              => $row->department_id,
             'section_id'                                 => $row->section_id,
-            'shift_id'                                   => $row->shift_id,
+            'shift_id'                                   => $shift->id ?? null,
             'leave_id'                                   => $this->leave_application_id ?? null,
             'shift_start_time'                           => $shift->clock_in      ?? '09:00:00',
             'shift_grace_time'                           => $shift->shift_grace_time ?? 0,
