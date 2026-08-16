@@ -331,7 +331,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
                 foreach ($dates as $date) {
                     //check roster assignment exist on date = from_date
-                    $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+                    $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
+                    //Log::info('Roster Assignment: ', ['rosterAssignment' => $rosterAssignment]);
                     if($rosterAssignment && $rosterAssignment->shift_id){
                         $shiftId = $rosterAssignment->shift_id;
                     }else{
