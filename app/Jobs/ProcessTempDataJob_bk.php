@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-class ProcessTempDataJob extends Job implements ShouldQueue
+class ProcessTempDataJobBk extends Job implements ShouldQueue
 {
     use InteractsWithQueue, Queueable, SerializesModels;
 
@@ -315,25 +315,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
             }
 
-            // ── Pre-pass: back-fill the PREVIOUS day's missing out-punch ──────────
-            // Must run before AttendanceProcessingService. Returns skip keys for
-            // dates whose punch was consumed as the previous day's night checkout.
-            $shiftResolver = function ($row, $date) use ($shifts) {
-                $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
-                if ($rosterAssignment && $rosterAssignment->shift_id) {
-                    $shiftId = $rosterAssignment->shift_id;
-                } else {
-                    $shiftId = $row->actual_shift_id;
-                }
-                return $shiftId ? $shifts->get($shiftId) : null;
-            };
-            $prevDaySkipKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
-                ->process($officialInfos, $dates, $shiftResolver);
-            Log::info('ProcessTempDataJob previous-day out-punch pre-pass done', [
-                'skip_key_count' => count($prevDaySkipKeys),
-                'skip_keys' => array_keys($prevDaySkipKeys),
-            ]);
-
             // ── Process every employee × date ────────────────────────────────────
             $prepared            = [];
             $statusLogData       = [];
@@ -349,16 +330,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $otRequisition   = $otRequisitions->get($row->employee_user_id);
 
                 foreach ($dates as $date) {
-                    // Skip dates already consumed as the previous day's night-shift checkout.
-                    if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
-                        Log::info('ProcessTempDataJob skipped date consumed as previous-day night checkout', [
-                            'employee_user_id' => $row->employee_user_id,
-                            'date' => $date,
-                            'skip_value' => $prevDaySkipKeys[$row->employee_user_id . '|' . $date],
-                        ]);
-                        continue;
-                    }
-
                     //check roster assignment exist on date = from_date
                     $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
                     //Log::info('Roster Assignment: ', ['rosterAssignment' => $rosterAssignment]);

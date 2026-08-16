@@ -188,6 +188,22 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
         }
 
+        // ── Pre-pass: back-fill the PREVIOUS day's missing out-punch ──────────
+        // Runs before AttendanceProcessingService. On this manual/correction flow
+        // biometric temps are not eager-loaded, so this is a safe no-op per employee
+        // (submitted rows already carry their own out_date/out_time explicitly).
+        $shiftResolver = function ($row, $date) use ($shifts) {
+            $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+            $shiftId = $rosterAssignment ? $rosterAssignment->shift_id : $row->actual_shift_id;
+            return $shiftId ? $shifts->get($shiftId) : null;
+        };
+        $prevDaySkipKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
+            ->process($officialInfos, $dates, $shiftResolver);
+        Log::info('ProcessManualDataJob previous-day out-punch pre-pass done', [
+            'skip_key_count' => count($prevDaySkipKeys),
+            'skip_keys' => array_keys($prevDaySkipKeys),
+        ]);
+
         // ── Process every submitted employee × date ───────────────────────────
         $prepared            = [];
         $statusLogData       = [];
@@ -209,6 +225,15 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             );
 
             foreach ($empDates as $date) {
+                // Skip dates already consumed as the previous day's night-shift checkout.
+                if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
+                    Log::info('ProcessManualDataJob skipped date consumed as previous-day night checkout', [
+                        'employee_user_id' => $row->employee_user_id,
+                        'date' => $date,
+                    ]);
+                    continue;
+                }
+
                 //check roster assignment exist on date = from_date
                 $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
                 if($rosterAssignment){
