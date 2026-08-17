@@ -359,7 +359,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $empHoliday,
                         $holidayDutyRequisitions,
                         $otRequisition,
-                        $empLeaveDetails
+                        $empLeaveDetails,
+                        null,
+                        null
                     );
 
                     Log::info('ProcessTempDataJob iteration result', [
