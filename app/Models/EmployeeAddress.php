@@ -7,6 +7,12 @@ use Illuminate\Database\Eloquent\Model;
 class EmployeeAddress extends Model
 {
     //
+    protected $with = [
+        'division',
+        'district',
+        'upazila',
+    ];
+
     protected $table = 'employee_addresses';
     protected $primaryKey = 'id';
     public $timestamps = false;

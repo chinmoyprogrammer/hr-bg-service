@@ -54,8 +54,13 @@ class AttendanceProcessingService
         ?Collection $holidayDutyRequisitions,
         ?object    $otRequisition,
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
-        ?array      $manualPunch = null
+        ?array      $manualPunch = null,
+        ?int        $createdUserId = null,
+
     ): array {
+
+        $this->systemUserId = $createdUserId ?? $this->systemUserId;
+
         Log::info('Attendance processing started for employee:', ['employee_user_id' => $row->employee_user_id, 'date' => $date]);
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;

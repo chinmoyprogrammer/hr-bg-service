@@ -2,14 +2,6 @@
 
 namespace App\Jobs;
 
-use Carbon\Carbon;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use App\Models\BankBranch;
 use App\Models\BankName;
 use App\Models\Branch;
@@ -25,6 +17,7 @@ use App\Models\EmployeeOfficialInformation;
 use App\Models\EmployeeType;
 use App\Models\Gender;
 use App\Models\LeaveHead;
+use App\Models\MediaUploadUsage;
 use App\Models\MfsList;
 use App\Models\Occupation;
 use App\Models\PhoneNumber;
@@ -34,8 +27,16 @@ use App\Models\Subsection;
 use App\Models\Upazila;
 use App\Models\User;
 use App\Models\UserStatusNSettings;
+use Carbon\Carbon;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Http\Request;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 
 class CacheRegenerateJob extends Job implements ShouldQueue
@@ -379,6 +380,7 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                     $mediaKeys[] = $basic . "_passport_no_image";
                     $mediaKeys[] = $basic . "_driving_license_image";
                     $mediaKeys[] = $basic . "_tin_no_image";
+                    $mediaKeys[] = $basic . "_cv_file";
                 }
                 foreach (($data->employeeEducations ?? []) as $education) {
                     if ($education->child_data_identifier_key_outgoing) {
@@ -444,6 +446,7 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                 $data->birth_certificate_no_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_birth_certificate_no_image");
                 $data->passport_no_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_passport_no_image");
                 $data->driving_license_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_driving_license_image");
+                $data->cv_file = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_cv_file");
                 $data->tin_no_image = $mediaLookup($data->basic_child_data_identifier_key_outgoing."_tin_no_image");
 
                 // Append academic_certificate_file to each education row
