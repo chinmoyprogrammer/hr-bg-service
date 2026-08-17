@@ -351,11 +351,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 foreach ($dates as $date) {
                     // Skip dates already consumed as the previous day's night-shift checkout.
                     if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
-                        Log::info('ProcessTempDataJob skipped date consumed as previous-day night checkout', [
-                            'employee_user_id' => $row->employee_user_id,
-                            'date' => $date,
-                            'skip_value' => $prevDaySkipKeys[$row->employee_user_id . '|' . $date],
-                        ]);
                         continue;
                     }
 
