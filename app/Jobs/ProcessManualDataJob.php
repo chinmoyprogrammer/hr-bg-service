@@ -60,12 +60,17 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'employee_user_id' => (int) $item['employee_user_id'],
                 'date'             => $item['date'],
                 'in_time'          => $item['in_time']  ?? null,
-                'out_date'          => $item['out_date'],
+                'out_date'         => $item['out_date'] ?? null,
                 'out_time'         => $item['out_time'] ?? null,
                 'is_corrected'     => $item['is_corrected'] ?? 0,
                 'is_manual'        => $item['is_manual'] ?? 0,
+                'created_user_id'  =>$this->payload['created_user_id'] ?? 1,
+                'remarks'          => $item['remarks'] ?? null
             ];
         }
+        Log::info('validRows:', ['validRows'=>$validRows]);
+        //dd($validRows);
+
 
         if (empty($validRows)) {
             Log::warning('ProcessManualDataJob: no valid rows after validation');
@@ -83,7 +88,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         $startBoundary = \Carbon\Carbon::parse($startDate)->startOfDay()->toDateString();
         $endBoundary   = \Carbon\Carbon::parse($endDate)->endOfDay()->toDateString();
         $jobStart      = date('Y-m-d H:i:s');
-        $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
+        $systemUserId  = $this->payload['created_user_id'] ?? (int) env('SYSTEM_USER_ID', 1);
 
         // ── Build a quick lookup: [employee_user_id|date => row] ──────────────
         // Used later to pass in_time / out_time into the service as "manual punch"
@@ -111,17 +116,28 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 ->whereNull('deleted_at')
                 ->whereBetween('out_date', [$startBoundary, $endBoundary])
                 ->where('approval_status', 1),
+            'hasRosterAssignment' => fn($q) => $q
+                ->whereBetween('from_date', [$startBoundary, $endBoundary])
+                ->whereHas('roster', fn($q) =>
+                    $q->where('deleted_at', null)
+                )
         ])
         ->whereIn('employee_user_id', $empUserIds)
+        ->where(function ($q) use ($endDate) {
+                $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
+        })
         ->get();
 
-        $shifts = Shift::where('effective_date', '<=', $startDate)
-            ->orderBy('effective_date', 'desc')
-            ->get()
-            ->keyBy('id');
+        $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
+                ->orderBy('effective_date', 'desc')
+                ->get()
+                ->keyBy('id');
 
         $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $empUserIds)
             ->whereBetween('leave_date', [$startDate, $endDate])
+            ->whereHas('leaveApplication', function ($q) {
+                $q->where('approval_status', 1);
+            })
             ->get()
             ->groupBy('employee_user_id');
 
@@ -193,14 +209,20 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             );
 
             foreach ($empDates as $date) {
+                //check roster assignment exist on date = from_date
+                $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+                if($rosterAssignment){
+                    $shiftId = $rosterAssignment->shift_id;
+                }else{
+                    $shiftId = $row->actual_shift_id;
+                }
+                $shift   = $shiftId ? $shifts->get($shiftId) : null;
                 $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
-                $shiftId       = $row->shift_id ?? Shift::find(1)->id;
-                $shift         = $shifts->get($shiftId);
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
+                $createdUserId = $this->payload['created_user_id'] ?? 1;
 
-                //Log::warning('manual:', ['manualPunch'=>$manualPunch]);
-
+                Log::warning('manual:', ['manualPunch'=>$manualPunch]);
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
                     $row,
                     $date,
@@ -210,7 +232,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $holidayDutyRequisitions,
                     $otRequisition,
                     $empLeaveDetails,
-                    $manualPunch
+                    $manualPunch,
+                    $createdUserId,
                 );
 
                 if ($result['skip']) {
@@ -287,10 +310,12 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 continue;
             }
 
+            [$employeeUserId] = explode('|', $employeeDateKey, 2);
+
             $manualAttendanceRecords[] = [
                 'employee_attendance_id' => $employeeAttendanceId,
                 'created_at' => $jobEnd,
-                'created_by' => $this->payload['created_user_id'],
+                'created_by' => $this->payload[0]['created_user_id'] ?? 0,
                 'employee_user_id' => $r->employee_user_id,
             ];
         }

@@ -183,5 +183,10 @@ class EmployeeOfficialInformation extends Model
 
     }
 
+    public function hasRosterAssignment()
+    {
+        return $this->hasMany(RosterAssignment::class, 'employee_user_id', 'employee_user_id');
+    }
+
 }
 

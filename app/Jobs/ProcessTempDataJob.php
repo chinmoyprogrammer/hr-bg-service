@@ -218,9 +218,16 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     ->whereNull('deleted_at')
                     ->whereBetween('out_date', [$startBoundary, $endBoundary])
                     ->where('approval_status', 1),
+                'hasRosterAssignment' => fn($q) => $q
+                    ->whereBetween('from_date', [$startBoundary, $endBoundary])
+                    ->whereHas('roster', fn($q) =>
+                        $q->where('deleted_at', null)
+                    )
             ])
             ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
                 $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
+            })->where(function ($q) use ($endDate) {
+                $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
             })
             //->where('employee_user_id',591)
             ->get();
@@ -234,7 +241,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             
             //208, 395, ->where('employee_user_id','=', 208)
 
-            $shifts = \App\Models\Shift::where('effective_date', '<=', $startDate)
+            $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
                 ->orderBy('effective_date', 'desc')
                 ->get()
                 ->keyBy('id');
@@ -323,8 +330,15 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $otRequisition   = $otRequisitions->get($row->employee_user_id);
 
                 foreach ($dates as $date) {
-                    $shiftId        = $row->shift_id;
-                    $shift          = $shiftId ? $shifts->get($shiftId) : null;
+                    //check roster assignment exist on date = from_date
+                    $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
+                    //Log::info('Roster Assignment: ', ['rosterAssignment' => $rosterAssignment]);
+                    if($rosterAssignment && $rosterAssignment->shift_id){
+                        $shiftId = $rosterAssignment->shift_id;
+                    }else{
+                        $shiftId = $row->actual_shift_id;
+                    }
+                    $shift   = $shiftId ? $shifts->get($shiftId) : null;
                     $publicHoliday  = $publicHolidays->get($date);
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                     Log::info('ProcessTempDataJob iteration start', [
@@ -345,7 +359,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $empHoliday,
                         $holidayDutyRequisitions,
                         $otRequisition,
-                        $empLeaveDetails
+                        $empLeaveDetails,
+                        null,
+                        null
                     );
 
                     Log::info('ProcessTempDataJob iteration result', [
@@ -412,7 +428,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 'payroll_item_count' => count($payrollAccruedItems),
                 'leave_log_count' => count($leaveAchieveLogs),
             ]);
-            DB::beginTransaction();
             try {
                 foreach (array_chunk($prepared, 500) as $chunk) {
                     EmployeeAttendance::insert($chunk);

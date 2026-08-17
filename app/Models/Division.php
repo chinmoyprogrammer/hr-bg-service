@@ -12,6 +12,7 @@ class Division extends Model
     use HasFactory, SoftDeletes;
 
     protected $guarded = [];
+    public $timestamps = false;
 
     // Relationships
     public function creator()
