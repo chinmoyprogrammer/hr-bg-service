@@ -99,24 +99,32 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             if (is_array($responseJson)) {
                 $records = $responseJson['data'] ?? $responseJson; // handle both wrapped and raw arrays
             }
-            $employeesWhoUpdated = EmployeeAttendance::query()
-                ->where('date', $startDate)
+            // Manual/correction attendance can replace/update device (biometric) data,
+            // but device data must NEVER replace/update a manual or corrected record.
+            // Guard this per (employee, date) across the WHOLE job window — not just
+            // $startDate — so a manual/corrected entry on any one date doesn't block
+            // (or get overwritten on) that employee's other, unprotected dates.
+            $manualOrCorrectedRows = EmployeeAttendance::query()
+                ->whereBetween('date', [$startDate, $endDate])
                 ->where(function ($q) {
                     $q->where('is_manual', 1)->orWhere('is_corrected', 1);
                 })
-                ->selectRaw('MAX(employee_user_id) as employee_user_id, emp_code')
-                ->groupBy('emp_code')
-                ->pluck('emp_code', 'employee_user_id')
-                ->toArray();
-             //Log::info('ProcessTempDataJob: employeesWhoUpdated', ['employeesWhoUpdated' => $employeesWhoUpdated]);
+                ->get(['employee_user_id', 'emp_code', 'date']);
+
+            $manualOrCorrectedByEmpId   = []; // "employee_user_id|date" => true
+            $manualOrCorrectedByEmpCode = []; // "emp_code|date" => true
+            foreach ($manualOrCorrectedRows as $r) {
+                $manualOrCorrectedByEmpId[$r->employee_user_id . '|' . $r->date]   = true;
+                $manualOrCorrectedByEmpCode[(string) $r->emp_code . '|' . $r->date] = true;
+            }
+            Log::info('ProcessTempDataJob: manual/corrected protection keys', [
+                'protected_date_count' => count($manualOrCorrectedByEmpId),
+            ]);
 
             $grouped = [];
             foreach ($records as $record) {
                 // expecting keys: emp_code, att_date (YYYY-MM-DD), punch_time (HH:MM)
                 if (!isset($record['emp_code'], $record['punch_time'])) {
-                    continue;
-                }
-                if (in_array($record['emp_code'], $employeesWhoUpdated)) {
                     continue;
                 }
                 $empCode = $record['emp_code'];
@@ -125,6 +133,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $punchTime = trim($record['punch_time']);
                 // Use att_date + punch_time to avoid defaulting to today
                 $datetime = \Carbon\Carbon::parse($punchTime);
+
+                // Never import a device punch for a date already protected by a
+                // manual/corrected attendance record for this employee.
+                if (isset($manualOrCorrectedByEmpCode[(string) $empCode . '|' . $datetime->format('Y-m-d')])) {
+                    continue;
+                }
 
                 $grouped[] = [
                     'emp_code' => intval($empCode),
@@ -224,9 +238,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $q->where('deleted_at', null)
                     )
             ])
-            ->when(!empty($employeesWhoUpdated), function ($q) use ($employeesWhoUpdated) {
-                $q->whereNotIn('employee_user_id', array_keys($employeesWhoUpdated));
-            })->where(function ($q) use ($endDate) {
+            ->where(function ($q) use ($endDate) {
                 $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
             })
             //->where('employee_user_id',591)
@@ -318,6 +330,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             // ── Pre-pass: back-fill the PREVIOUS day's missing out-punch ──────────
             // Must run before AttendanceProcessingService. Returns skip keys for
             // dates whose punch was consumed as the previous day's night checkout.
+            $shiftId = $rosterAssignment = null ;
             $shiftResolver = function ($row, $date) use ($shifts) {
                 $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
                 if ($rosterAssignment && $rosterAssignment->shift_id) {
@@ -327,11 +340,18 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 }
                 return $shiftId ? $shifts->get($shiftId) : null;
             };
-            $prevDaySkipKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
+            Log::info('ProcessTempDataJob previous-day out-punch pre-pass start', [
+                'official_info_count' => count($officialInfos),
+                'dates' => $dates,
+                'shift_resolver' => $shiftResolver,
+                'shiftId' => $shiftId,
+                'rosterAssignment' => $rosterAssignment,
+            ]);
+            $carryOverKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
                 ->process($officialInfos, $dates, $shiftResolver);
             Log::info('ProcessTempDataJob previous-day out-punch pre-pass done', [
-                'skip_key_count' => count($prevDaySkipKeys),
-                'skip_keys' => array_keys($prevDaySkipKeys),
+                'carry_over_key_count' => count($carryOverKeys),
+                'carry_over_keys' => $carryOverKeys,
             ]);
 
             // ── Process every employee × date ────────────────────────────────────
@@ -349,10 +369,19 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $otRequisition   = $otRequisitions->get($row->employee_user_id);
 
                 foreach ($dates as $date) {
-                    // Skip dates already consumed as the previous day's night-shift checkout.
-                    if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
+                    // Device data must never replace/update a manual or corrected
+                    // attendance record — skip this date entirely for this employee.
+                    if (isset($manualOrCorrectedByEmpId[$row->employee_user_id . '|' . $date])) {
+                        Log::info('ProcessTempDataJob skipped date: protected by manual/corrected record', [
+                            'employee_user_id' => $row->employee_user_id,
+                            'date' => $date,
+                        ]);
                         continue;
                     }
+
+                    // Dates whose only punch was consumed as the previous day's night-shift
+                    // checkout carry over as Incomplete In + 12/13 instead of Absent.
+                    $carryOverNightStatus = $carryOverKeys[$row->employee_user_id . '|' . $date] ?? null;
 
                     //check roster assignment exist on date = from_date
                     $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
@@ -383,7 +412,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $empHoliday,
                         $holidayDutyRequisitions,
                         $otRequisition,
-                        $empLeaveDetails
+                        $empLeaveDetails,
+                        null,
+                        $carryOverNightStatus
                     );
 
                     Log::info('ProcessTempDataJob iteration result', [

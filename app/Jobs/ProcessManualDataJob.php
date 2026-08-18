@@ -197,11 +197,11 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             $shiftId = $rosterAssignment ? $rosterAssignment->shift_id : $row->actual_shift_id;
             return $shiftId ? $shifts->get($shiftId) : null;
         };
-        $prevDaySkipKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
+        $carryOverKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
             ->process($officialInfos, $dates, $shiftResolver);
         Log::info('ProcessManualDataJob previous-day out-punch pre-pass done', [
-            'skip_key_count' => count($prevDaySkipKeys),
-            'skip_keys' => array_keys($prevDaySkipKeys),
+            'carry_over_key_count' => count($carryOverKeys),
+            'carry_over_keys' => $carryOverKeys,
         ]);
 
         // ── Process every submitted employee × date ───────────────────────────
@@ -225,14 +225,9 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             );
 
             foreach ($empDates as $date) {
-                // Skip dates already consumed as the previous day's night-shift checkout.
-                if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
-                    Log::info('ProcessManualDataJob skipped date consumed as previous-day night checkout', [
-                        'employee_user_id' => $row->employee_user_id,
-                        'date' => $date,
-                    ]);
-                    continue;
-                }
+                // Dates whose only punch was consumed as the previous day's night-shift
+                // checkout carry over as Incomplete In + 12/13 instead of Absent.
+                $carryOverNightStatus = $carryOverKeys[$row->employee_user_id . '|' . $date] ?? null;
 
                 //check roster assignment exist on date = from_date
                 $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
@@ -257,6 +252,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $otRequisition,
                     $empLeaveDetails,
                     $manualPunch,
+                    $carryOverNightStatus,
                 );
 
                 if ($result['skip']) {

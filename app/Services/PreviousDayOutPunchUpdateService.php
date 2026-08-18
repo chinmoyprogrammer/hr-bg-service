@@ -20,7 +20,10 @@ use Illuminate\Support\Facades\Log;
  * allowance in sync — exactly what the old inline handlers inside
  * AttendanceProcessingService used to do, now centralised here.
  *
- * It covers both shift types, distinguished by the shift->is_overnight flag:
+ * It covers both shift types, distinguished by the PREVIOUS day's shift->is_overnight
+ * flag (roster assignments can change day to day, so the day being closed out must
+ * be classified by its OWN shift, not by whatever shift is scheduled on the day the
+ * early punch physically landed on):
  *   - single calendar-day shift (is_overnight = 0): shift start & end fall on the
  *     same calendar day. A checkout that spills past midnight is overnight/overtime
  *     duty → previous day gets status 13 (Over Night Duty) + night allowance.
@@ -29,9 +32,14 @@ use Illuminate\Support\Facades\Log;
  *     previous day gets status 12 (Night Duty checkout), no extra allowance.
  *
  * In both cases the next day's early punch (before the check-in cutoff) is what
- * back-fills the previous day's out_time / out_date. For a two-day shift whose next
- * day carries ONLY that checkout punch (no fresh check-in), it returns a "skip key"
- * so the caller does not build a spurious current-day (absent) row.
+ * back-fills the previous day's out_time / out_date. When that next day carries
+ * ONLY that checkout punch (no fresh check-in), this service returns a
+ * "carry-over key" for it: employee_user_id|date => 12 or 13 (the night-duty
+ * status code matching the shift type just closed out). The caller must then
+ * build that date as Incomplete In (status 10) + the carry-over status, instead
+ * of marking it Absent — the punch was real, it was just spent completing the
+ * previous day's checkout, so the day itself is still "open" pending its own
+ * check-in.
  */
 class PreviousDayOutPunchUpdateService
 {
@@ -46,12 +54,13 @@ class PreviousDayOutPunchUpdateService
      * @param  Collection  $officialInfos  EmployeeOfficialInformation rows with `employeeAttendanceTemps` eager-loaded
      * @param  array<int,string>  $dates    dates being processed (Y-m-d)
      * @param  callable  $shiftResolver     fn(object $row, string $date): ?object  → resolves the shift for that emp/date
-     * @return array<string,int>            skip keys "employee_user_id|date" whose punch was consumed as the previous day's night checkout
+     * @return array<string,int>            carry-over keys "employee_user_id|date" => 12|13, for dates whose only
+     *                                       punch was consumed as the previous day's night checkout
      */
     public function process(Collection $officialInfos, array $dates, callable $shiftResolver): array
     {
-        $skipKeys = [];
-        $now      = date('Y-m-d H:i:s');
+        $carryOverKeys = [];
+        $now           = date('Y-m-d H:i:s');
 
         Log::info('PreviousDayOutPunchUpdateService started', [
             'employee_count' => $officialInfos->count(),
@@ -108,44 +117,78 @@ class PreviousDayOutPunchUpdateService
                     continue;
                 }
 
-                if ((int) ($shift->is_overnight ?? 0) === 1) {
+                $prevDate  = date('Y-m-d', strtotime($date . ' -1 day'));
+                $prevShift = $shiftResolver($row, $prevDate);
+
+                Log::info('PreviousDayOutPunchUpdateService prevDate shift resolved', [
+                    'employee_user_id' => $row->employee_user_id,
+                    'date' => $date,
+                    'prev_date' => $prevDate,
+                    'date_shift_id' => $shift->id ?? null,
+                    'date_is_overnight' => (int) ($shift->is_overnight ?? 0),
+                    'prev_shift_id' => $prevShift->id ?? null,
+                    'prev_is_overnight' => $prevShift ? (int) ($prevShift->is_overnight ?? 0) : null,
+                ]);
+
+                // The shift that decides HOW to close out the previous day (single-day
+                // overtime vs. scheduled two-day night duty) must be the shift that
+                // actually governed $prevDate — NOT $date's own shift. Roster
+                // assignments can change day to day, so falling back to $shift here
+                // only when $prevShift can't be resolved at all.
+                $shiftForPrevDayClassification = $prevShift ?? $shift;
+
+                if ((int) ($shiftForPrevDayClassification->is_overnight ?? 0) === 1) {
                     // Two calendar-day shift: check-in happened on $date-1, checkout is
                     // this morning. Back-fill $date-1; when $date has no fresh check-in
-                    // ($first === null) skip its otherwise-spurious current-day row.
-                    $updated = $this->backfillTwoDayShiftCheckout($row, $date, $lastBeforeCutoff, $now);
+                    // ($first === null), $date itself carries over as Incomplete In (10)
+                    // + Night Duty checkout (12) rather than being left Absent.
+                    $updated = $this->backfillTwoDayShiftCheckout($row, $date, $lastBeforeCutoff, $now, $prevShift);
                     Log::info('PreviousDayOutPunchUpdateService two-day shift back-fill result', [
                         'employee_user_id' => $row->employee_user_id,
                         'date' => $date,
                         'updated' => $updated,
                         'has_fresh_check_in' => (bool) $first,
-                        'will_skip_current_day' => $updated && $first === null,
+                        'will_carry_over_current_day' => $updated && $first === null,
                     ]);
                     if ($updated && $first === null) {
-                        $skipKey = $row->employee_user_id . '|' . $date;
-                        $skipKeys[$skipKey] = 2;
-                        Log::info('PreviousDayOutPunchUpdateService skip key added', [
-                            'skip_key' => $skipKey,
+                        $carryOverKey = $row->employee_user_id . '|' . $date;
+                        $carryOverKeys[$carryOverKey] = 12; // Night Duty (checkout)
+                        Log::info('PreviousDayOutPunchUpdateService carry-over key added', [
+                            'carry_over_key' => $carryOverKey,
+                            'carry_over_status' => 12,
                         ]);
                     }
                 } else {
                     // Single calendar-day shift: an early $date punch is $date-1's
-                    // overnight / overtime checkout.
-                    $updated = $this->backfillSingleDayOvertimeCheckout($row, $date, $lastBeforeCutoff, $now);
+                    // overnight / overtime checkout. When $date has no fresh check-in
+                    // ($first === null), $date itself carries over as Incomplete In (10)
+                    // + Over Night Duty (13) rather than being left Absent.
+                    $updated = $this->backfillSingleDayOvertimeCheckout($row, $date, $lastBeforeCutoff, $now, $prevShift);
                     Log::info('PreviousDayOutPunchUpdateService single-day overtime back-fill result', [
                         'employee_user_id' => $row->employee_user_id,
                         'date' => $date,
                         'updated' => $updated,
+                        'has_fresh_check_in' => (bool) $first,
+                        'will_carry_over_current_day' => $updated && $first === null,
                     ]);
+                    if ($updated && $first === null) {
+                        $carryOverKey = $row->employee_user_id . '|' . $date;
+                        $carryOverKeys[$carryOverKey] = 13; // Over Night Duty
+                        Log::info('PreviousDayOutPunchUpdateService carry-over key added', [
+                            'carry_over_key' => $carryOverKey,
+                            'carry_over_status' => 13,
+                        ]);
+                    }
                 }
             }
         }
 
         Log::info('PreviousDayOutPunchUpdateService completed', [
-            'skip_key_count' => count($skipKeys),
-            'skip_keys' => array_keys($skipKeys),
+            'carry_over_key_count' => count($carryOverKeys),
+            'carry_over_keys' => $carryOverKeys,
         ]);
 
-        return $skipKeys;
+        return $carryOverKeys;
     }
 
     /**
@@ -158,7 +201,8 @@ class PreviousDayOutPunchUpdateService
         object $row,
         string $date,
         ?object $lastBeforeCutoff,
-        string $now
+        string $now,
+        ?object $prevShift = null
     ): bool {
         if ($lastBeforeCutoff == null) {
             return false;
@@ -167,11 +211,13 @@ class PreviousDayOutPunchUpdateService
         $prevDate = date('Y-m-d', strtotime($date . ' -1 day'));
         $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
             ->where('date', $prevDate)
+            ->where('is_manual', 0)
+            ->where('is_corrected', 0)
             ->whereNotNull('in_time')
             ->first();
 
         if (!$prevAttendance) {
-            Log::info('PreviousDayOutPunchUpdateService single-day: previous attendance not found', [
+            Log::info('PreviousDayOutPunchUpdateService single-day: previous attendance not found or is manual/corrected (protected)', [
                 'employee_user_id' => $row->employee_user_id,
                 'date' => $date,
                 'prev_date' => $prevDate,
@@ -198,6 +244,8 @@ class PreviousDayOutPunchUpdateService
             'out_time' => $outTime,
             'out_date' => $outDate,
         ]);
+
+        $this->applyEarlyOutIfNeeded($row, $date, $prevShift, $prevAttendance, $lastBeforeCutoff, $now);
 
         $hasNightCheckoutStatus = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
             ->where('attendance_status', 13)
@@ -277,7 +325,8 @@ class PreviousDayOutPunchUpdateService
         object $row,
         string $date,
         ?object $lastBeforeCutoff,
-        string $now
+        string $now,
+        ?object $prevShift = null
     ): bool {
         if ($lastBeforeCutoff == null) {
             return false;
@@ -286,11 +335,13 @@ class PreviousDayOutPunchUpdateService
         $prevDate = date('Y-m-d', strtotime($date . ' -1 day'));
         $prevAttendance = EmployeeAttendance::where('employee_user_id', $row->employee_user_id)
             ->where('date', $prevDate)
+            ->where('is_manual', 0)
+            ->where('is_corrected', 0)
             ->whereNotNull('in_time')
             ->first();
 
         if (!$prevAttendance) {
-            Log::info('PreviousDayOutPunchUpdateService two-day: previous attendance not found', [
+            Log::info('PreviousDayOutPunchUpdateService two-day: previous attendance not found or is manual/corrected (protected)', [
                 'employee_user_id' => $row->employee_user_id,
                 'date' => $date,
                 'prev_date' => $prevDate,
@@ -317,6 +368,8 @@ class PreviousDayOutPunchUpdateService
             'out_time' => $outTime,
             'out_date' => $outDate,
         ]);
+
+        $this->applyEarlyOutIfNeeded($row, $date, $prevShift, $prevAttendance, $lastBeforeCutoff, $now);
 
         $hasNightCheckoutStatus = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
             ->where('attendance_status', 12)
@@ -357,6 +410,89 @@ class PreviousDayOutPunchUpdateService
     }
 
     /**
+     * Mirrors AttendanceProcessingService::applyEarlyOutStatus for the checkout
+     * punch that just back-filled the previous day's attendance row. Without this,
+     * a night/overnight-shift checkout that crosses midnight never gets evaluated
+     * against the shift's clock_out window at all — it always lands as status
+     * 12/13 only, even when the employee left well before their scheduled
+     * clock_out. $prevShift is the shift that actually governed the day being
+     * closed out (resolved for $prevDate, NOT $date), since that's whose
+     * clock_out_start_time / clock_out the checkout must be measured against.
+     */
+    private function applyEarlyOutIfNeeded(
+        object $row,
+        string $date,
+        ?object $prevShift,
+        EmployeeAttendance $prevAttendance,
+        object $lastBeforeCutoff,
+        string $now
+    ): void {
+        if (!$prevShift || !$prevShift->clock_out_start_time || !$prevShift->clock_out) {
+            return;
+        }
+
+        $punchTime = strtotime($lastBeforeCutoff->punch_datetime);
+        $isEarlyOut = $punchTime >= strtotime($date . ' ' . $prevShift->clock_out_start_time)
+            && $punchTime <  strtotime($date . ' ' . $prevShift->clock_out);
+
+        if (!$isEarlyOut) {
+            return;
+        }
+
+        $hasEarlyOutStatus = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
+            ->where('attendance_status', 7)
+            ->where('attendance_date', $date)
+            ->exists();
+
+        if ($hasEarlyOutStatus) {
+            return;
+        }
+
+        Log::info('PreviousDayOutPunchUpdateService: Early Out detected on cross-midnight checkout', [
+            'employee_user_id' => $row->employee_user_id,
+            'prev_attendance_id' => $prevAttendance->id,
+            'date' => $date,
+            'checkout_punch' => $lastBeforeCutoff->punch_datetime,
+            'clock_out_start_time' => $prevShift->clock_out_start_time,
+            'clock_out' => $prevShift->clock_out,
+        ]);
+
+        EmployeeAttendanceStatusLog::insert([
+            'employee_user_id'       => $row->employee_user_id,
+            'employee_attendance_id' => $prevAttendance->id,
+            'leave_application_id'   => null,
+            'attendance_status'      => 7, // Early Out
+            'attendance_date'        => $date,
+            'created_user_id'        => $this->systemUserId,
+            'created_at'             => $now,
+        ]);
+
+        $approvedEarlyOut = $row->hasEarlyOutRequests?->where('out_date', $date)->first();
+        if (!$approvedEarlyOut) {
+            return;
+        }
+
+        $hasEarlyOutAuthorizedStatus = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
+            ->where('attendance_status', 23)
+            ->where('attendance_date', $date)
+            ->exists();
+
+        if ($hasEarlyOutAuthorizedStatus) {
+            return;
+        }
+
+        EmployeeAttendanceStatusLog::insert([
+            'employee_user_id'       => $row->employee_user_id,
+            'employee_attendance_id' => $prevAttendance->id,
+            'leave_application_id'   => null,
+            'attendance_status'      => 23, // Early Out Authorized
+            'attendance_date'        => $date,
+            'created_user_id'        => $this->systemUserId,
+            'created_at'             => $now,
+        ]);
+    }
+
+    /**
      * Resolve first / last / last-before-cutoff punches for a single day.
      * Ported from AttendanceProcessingService::resolveFirstLastPunch (debug logging
      * removed) to keep punch selection identical to the main service.
@@ -370,9 +506,19 @@ class PreviousDayOutPunchUpdateService
         $start = Carbon::parse($date . ' ' . $shift->start_check_in_time);
         $end   = Carbon::parse($date . ' ' . $shift->end_check_in_time);
 
+        // Scope to punches physically dated $date. employeeAttendanceTemps can span
+        // the whole batch date range (multi-day cron runs), and without this filter
+        // the before/after-cutoff split below only checks time-of-day — a stray
+        // early-morning punch from an UNRELATED date in that range could then be
+        // misread as "yesterday's overnight checkout" and wrongly grant night
+        // allowance for a day the employee never actually worked past midnight on.
         $temps = $row->employeeAttendanceTemps
             ->unique('punch_datetime')
             ->sortBy('punch_datetime')
+            ->values()
+            ->filter(function ($t) use ($date) {
+                return Carbon::parse($t->punch_datetime)->format('Y-m-d') === $date;
+            })
             ->values();
 
         if ($temps->isEmpty()) {

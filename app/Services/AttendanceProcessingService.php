@@ -54,11 +54,27 @@ class AttendanceProcessingService
         ?Collection $holidayDutyRequisitions,
         ?object    $otRequisition,
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
-        ?array      $manualPunch = null
+        ?array      $manualPunch = null,
+        ?int        $carryOverNightStatus = null // 12|13 when this date's only punch was consumed by PreviousDayOutPunchUpdateService to close out the previous day
     ): array {
         Log::info('Attendance processing started for employee:', ['employee_user_id' => $row->employee_user_id, 'date' => $date]);
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;
+
+        // ── Reset per-call state ────────────────────────────────────────────────
+        // This service is bound as a SINGLETON (see AttendanceServiceProvider), so
+        // the same instance is reused across every process() call within a queue
+        // worker's lifetime — across employees, dates, AND across different job
+        // types (ProcessManualDataJob, ProcessTempDataJob). Without an explicit
+        // reset here, a prior manual/corrected call's leftover
+        // is_manual/is_corrected/source/remarks would leak into the next call
+        // whenever $manualPunch is null, causing biometric-sourced attendance rows
+        // to be wrongly marked as 'manual'.
+        $this->isManual = 0;
+        $this->isCorrected = 0;
+        $this->source = 'biometric';
+        $this->remarks = null;
+
         // ── Manual punch override ─────────────────────────────────────────────────
         if ($manualPunch) {
             $outDate = $manualPunch['out_date'] ?? $date;
@@ -133,8 +149,44 @@ class AttendanceProcessingService
         [$first, $last, $lastBeforeCutoff] = $this->resolveFirstLastPunch($row, $date, $shift);
         Log::info('first after resolveFirstLastPunch:', ['first'=>$first, 'last'=>$last, 'lastBeforeCutoff'=>$lastBeforeCutoff]);
 
+        // ── Manual/corrected entries: bypass the cutoff-window heuristic ──────────
+        // resolveFirstLastPunch() exists to disambiguate NOISY multi-punch biometric
+        // data by time-of-day. A manual/correction submission already states exactly
+        // which timestamp is in_time and which is out_time — running that heuristic
+        // over it is not just unnecessary, it actively misclassifies an overnight
+        // out_time (early-morning time-of-day) as a "before cutoff" punch belonging
+        // to some other day, silently dropping the submitted checkout. Rebuild
+        // first/last directly from the submission instead, for both shift types.
+        if ($manualPunch) {
+            [$first, $last, $lastBeforeCutoff] = $this->resolveManualFirstLast($manualPunch, $date);
+            Log::info('first/last overridden from manual submission:', ['first'=>$first, 'last'=>$last]);
+        }
+
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if (!$first) {
+            // This date's only punch (if any) was already consumed by
+            // PreviousDayOutPunchUpdateService to close out the PREVIOUS day's
+            // overnight/night-duty checkout. The day itself is not "absent" — it's
+            // still open, pending its own check-in — so tag Incomplete In (10) +
+            // the carry-over night-duty status (12/13) instead of marking Absent.
+            if ($carryOverNightStatus !== null) {
+                Log::info('AttendanceProcessingService applying carry-over status instead of absent', [
+                    'employee_user_id' => $row->employee_user_id ?? null,
+                    'emp_code' => $row->emp_code ?? null,
+                    'date' => $date,
+                    'carry_over_status' => $carryOverNightStatus,
+                ]);
+                $statusesForLog = [10, $carryOverNightStatus];
+                $result['statusLogs'] = $this->buildStatusLogRows(
+                    $row->employee_user_id, $date, $now, $statusesForLog
+                );
+                $result['attendance'] = $this->buildAttendanceRow(
+                    $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
+                );
+                $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
+                return $result;
+            }
+
             Log::info('AttendanceProcessingService treating as absent: no first punch after cutoff', [
                 'employee_user_id' => $row->employee_user_id ?? null,
                 'emp_code' => $row->emp_code ?? null,
@@ -170,6 +222,11 @@ class AttendanceProcessingService
 
         // ── Overnight shift: resolve out-date / out-time or delegate to next day ──
         [$outDate, $outTime] = $this->resolveOutDateTime($row, $date, $shift, $first, $last);
+        if ($manualPunch) {
+            // Manual/corrected entries already carry an explicit last punch — never
+            // defer it to "resolved on next day" the way the biometric cron flow does.
+            $outDate = $last ? Carbon::parse($last->punch_datetime)->format('Y-m-d') : null;
+        }
         Log::warning('before overnight shift', [$result]);
         if($this->isManual==1 || $this->isCorrected==1){
             $this->handleOvernightCheckoutForNormalShiftManualOrCurrection($row,$date,$outDate,$shift,$first,$last,$statusesForLog,
@@ -302,12 +359,22 @@ Log::warning('resolveFirstLastPunch 2 :', ['resolveFirstLastPunch'=>$row]);
         // Split punches by a fixed 05:00 cutoff:
         // - keep punches at/after 05:00:00 for normal first/last selection
         // - from 00:00:00 to 04:59:59 keep only the latest one
+        // Scope to punches physically dated $date. employeeAttendanceTemps can span
+        // the whole batch date range (multi-day cron runs), and without this filter
+        // the before/after-cutoff split below only checks time-of-day — a stray
+        // early-morning punch from an UNRELATED date in that range could then be
+        // misread as "yesterday's overnight checkout" and wrongly grant night
+        // allowance for a day the employee never actually worked past midnight on.
         $temps = $row->employeeAttendanceTemps
             ->unique('punch_datetime')
             ->sortBy('punch_datetime')
+            ->values()
+            ->filter(function ($t) use ($date) {
+                return Carbon::parse($t->punch_datetime)->format('Y-m-d') === $date;
+            })
             ->values();
 
-        if($row->employeeAttendanceTemps->isEmpty())
+        if ($temps->isEmpty())
         {
             return [null, null, null];
         }
@@ -382,6 +449,26 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         return [$first, $last,$lastBeforeCutoff];
     }
 
+    /**
+     * Build first/last punch objects directly from a manual/correction submission,
+     * bypassing the cutoff-window heuristic entirely. Both in_time and out_time
+     * (with its own out_date, which may be the next calendar day for an overnight
+     * checkout) are already explicit — no ambiguity to resolve.
+     */
+    private function resolveManualFirstLast(array $manualPunch, string $date): array
+    {
+        $first = !empty($manualPunch['in_time'])
+            ? (object) ['punch_datetime' => $date . ' ' . $manualPunch['in_time']]
+            : null;
+
+        $outDate = $manualPunch['out_date'] ?? $date;
+        $last = !empty($manualPunch['out_time'])
+            ? (object) ['punch_datetime' => $outDate . ' ' . $manualPunch['out_time']]
+            : null;
+
+        return [$first, $last, null];
+    }
+
     private function resolveAbsentStatuses(
         string      $date,
         ?Collection $leaveApplicationDetails,
@@ -433,8 +520,11 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
     /*
     * handleOvernightCheckoutForNormalShiftManualOrCurrection
-    * it return status log flag = 12 (Night Duty (checkout)) anď
-    * 
+    * Manual/corrected entry whose checkout crosses into the next calendar day.
+    * Single-day shift (is_overnight=0)  -> status 13 (Over Night Duty) + night allowance.
+    * Two-day/overnight shift (is_overnight=1) -> status 12 (Night Duty checkout), no
+    * extra allowance — it's scheduled duty, not overtime (mirrors
+    * PreviousDayOutPunchUpdateService's cron-flow behavior for the same distinction).
     */
     private function handleOvernightCheckoutForNormalShiftManualOrCurrection(
         object $row,
@@ -453,29 +543,37 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             !$last ||
             !$outDate ||
             !$shift ||
-            $shift->is_overnight != 0 ||
             !$first->punch_datetime ||
             (strtotime($outDate . ' ' . $shift->start_check_in_time) <= strtotime($last->punch_datetime))
         ) {
             return false;
         }
-        Log::info('handleOvernightCheckoutForNormalShiftManualOrCurrection');
 
-        if (!in_array(13, $statusesForLog, true)) {
-            $statusesForLog[] = 13; // Over Night Duty
+        $isOvernightShift = (int) ($shift->is_overnight ?? 0) === 1;
+        $carryOverStatus  = $isOvernightShift ? 12 : 13; // Night Duty (checkout) vs Over Night Duty
+
+        Log::info('handleOvernightCheckoutForNormalShiftManualOrCurrection', [
+            'is_overnight_shift' => $isOvernightShift,
+            'carry_over_status'  => $carryOverStatus,
+        ]);
+
+        if (!in_array($carryOverStatus, $statusesForLog, true)) {
+            $statusesForLog[] = $carryOverStatus;
         }
 
-        $result['payrollAccruedItems'][] = [
-            'employee_user_id'       => $row->employee_user_id,
-            'employee_attendance_id' => null,
-            'amount'                 => ($row->gross_salary / date('t')) * 1,
-            'type'                   => 6, // Night Duty Allowance
-            'month'                  => date('m'),
-            'year'                   => date('Y'),
-            'date'                   => $date,
-            'created_user_id'        => $this->systemUserId,
-            'created_at'             => $now,
-        ];
+        if (!$isOvernightShift) {
+            $result['payrollAccruedItems'][] = [
+                'employee_user_id'       => $row->employee_user_id,
+                'employee_attendance_id' => null,
+                'amount'                 => ($row->gross_salary / date('t')) * 1,
+                'type'                   => 6, // Night Duty Allowance
+                'month'                  => date('m'),
+                'year'                   => date('Y'),
+                'date'                   => $date,
+                'created_user_id'        => $this->systemUserId,
+                'created_at'             => $now,
+            ];
+        }
 
         return true;
     }
