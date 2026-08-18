@@ -90,7 +90,23 @@ class PreviousDayOutPunchUpdateService
                     continue;
                 }
 
-                [$first, $last, $lastBeforeCutoff] = $this->resolveFirstLastPunch($row, $date, $shift);
+                // Resolve $prevShift BEFORE selecting the completion-punch candidate.
+                // The candidate itself must be chosen using $prevShift's own after-hours
+                // window (its clock_out through its next start_check_in_time) — not just
+                // "anything before $date's own cutoff". Selecting first and validating
+                // after the fact would only reject a bad candidate; it would never go
+                // back and pick a DIFFERENT, genuinely-valid earlier punch that also
+                // happened to fall before $date's (possibly much later) cutoff.
+                $prevDate  = date('Y-m-d', strtotime($date . ' -1 day'));
+                $prevShift = $shiftResolver($row, $prevDate);
+                Log::info('Previous Shift:', [
+                    'prev_date' => $prevDate,
+                    'prev_shift_id' => $prevShift->id ?? null,
+                ]);
+
+                [$first, $last, $lastBeforeCutoff] = $this->resolveFirstLastPunch($row, $date, $shift, $prevShift, $prevDate);
+
+                //var_dump($first, $last, $lastBeforeCutoff);
 
                 Log::info('PreviousDayOutPunchUpdateService punches resolved', [
                     'employee_user_id' => $row->employee_user_id,
@@ -104,31 +120,20 @@ class PreviousDayOutPunchUpdateService
                     'first' => $first->punch_datetime ?? null,
                     'last' => $last->punch_datetime ?? null,
                     'last_before_cutoff' => $lastBeforeCutoff->punch_datetime ?? null,
-                    'prev_date' => date('Y-m-d', strtotime($date . ' -1 day')),
+                    'prev_date' => $prevDate,
+                    'prev_shift_id' => $prevShift->id ?? null,
+                    'prev_is_overnight' => $prevShift ? (int) ($prevShift->is_overnight ?? 0) : null,
                 ]);
 
-                // Only a punch that fell BEFORE the check-in cutoff on $date can be
-                // the previous day's cross-midnight checkout. Nothing to do otherwise.
+                // No punch fell within $prevShift's plausible after-hours window —
+                // nothing to back-fill for $prevDate from this date's punches.
                 if ($lastBeforeCutoff === null) {
-                    Log::info('PreviousDayOutPunchUpdateService no early punch to back-fill previous day', [
+                    Log::info('PreviousDayOutPunchUpdateService no plausible early punch to back-fill previous day', [
                         'employee_user_id' => $row->employee_user_id,
                         'date' => $date,
                     ]);
                     continue;
                 }
-
-                $prevDate  = date('Y-m-d', strtotime($date . ' -1 day'));
-                $prevShift = $shiftResolver($row, $prevDate);
-
-                Log::info('PreviousDayOutPunchUpdateService prevDate shift resolved', [
-                    'employee_user_id' => $row->employee_user_id,
-                    'date' => $date,
-                    'prev_date' => $prevDate,
-                    'date_shift_id' => $shift->id ?? null,
-                    'date_is_overnight' => (int) ($shift->is_overnight ?? 0),
-                    'prev_shift_id' => $prevShift->id ?? null,
-                    'prev_is_overnight' => $prevShift ? (int) ($prevShift->is_overnight ?? 0) : null,
-                ]);
 
                 // The shift that decides HOW to close out the previous day (single-day
                 // overtime vs. scheduled two-day night duty) must be the shift that
@@ -214,6 +219,12 @@ class PreviousDayOutPunchUpdateService
             ->where('is_manual', 0)
             ->where('is_corrected', 0)
             ->whereNotNull('in_time')
+            // Defense in depth: only a genuinely INCOMPLETE previous day (no out_time
+            // yet) should ever be touched here. Without this, any already-complete
+            // record matching the date/in_time criteria would get silently
+            // overwritten the moment ANY later punch happens to pass the
+            // plausibility window check above.
+            ->whereNull('out_time')
             ->first();
 
         if (!$prevAttendance) {
@@ -338,6 +349,12 @@ class PreviousDayOutPunchUpdateService
             ->where('is_manual', 0)
             ->where('is_corrected', 0)
             ->whereNotNull('in_time')
+            // Defense in depth: only a genuinely INCOMPLETE previous day (no out_time
+            // yet) should ever be touched here. Without this, any already-complete
+            // record matching the date/in_time criteria would get silently
+            // overwritten the moment ANY later punch happens to pass the
+            // plausibility window check above.
+            ->whereNull('out_time')
             ->first();
 
         if (!$prevAttendance) {
@@ -495,9 +512,16 @@ class PreviousDayOutPunchUpdateService
     /**
      * Resolve first / last / last-before-cutoff punches for a single day.
      * Ported from AttendanceProcessingService::resolveFirstLastPunch (debug logging
-     * removed) to keep punch selection identical to the main service.
+     * removed) to keep punch selection identical to the main service, EXCEPT for
+     * lastBeforeCutoff: that candidate is selected using $prevShift's own
+     * after-hours window (its clock_out through its next start_check_in_time), not
+     * merely "before $date's cutoff". Roster assignments can change day to day, so
+     * $date's shift may bear no relation to whatever shift actually governed
+     * $prevDate — picking the chronologically-last pre-cutoff punch and validating
+     * it afterwards would reject a bad candidate but never go back and try a
+     * different, genuinely-plausible earlier one.
      */
-    private function resolveFirstLastPunch(object $row, string $date, ?object $shift): array
+    private function resolveFirstLastPunch(object $row, string $date, ?object $shift, ?object $prevShift = null, ?string $prevDate = null): array
     {
         if (!$shift || $row->employeeAttendanceTemps->isEmpty()) {
             return [null, null, null];
@@ -553,7 +577,48 @@ class PreviousDayOutPunchUpdateService
             ->concat($afterCheckInWindowPunches)
             ->values();
 
-        $lastBeforeCutoff = $beforeCutoff->last();
+        // Select the completion-punch candidate using $prevShift's own after-hours
+        // window — scanned directly from $temps (the FULL date-scoped punch list),
+        // not from $beforeCutoff. $beforeCutoff was already partitioned using
+        // $shift's ($date's own) cutoff time; if $prevShift's window extends past
+        // that cutoff (e.g. $date's shift starts earlier than $prevShift's did), a
+        // genuinely valid completion punch would already have been shunted into
+        // $afterCutoff and never reach this candidate pool at all. Scanning $temps
+        // directly with $prevShift's own bounds avoids that gate entirely.
+        //
+        // Upper bound (both shift types): must be before $prevShift's own next
+        // start_check_in_time — once that passes, the same shift would be starting
+        // its next cycle, so an even-later punch can't still be "closing out"
+        // $prevDate.
+        //
+        // Lower bound differs by shift type:
+        //   - single-day shift (is_overnight=0): the whole scenario IS overtime past
+        //     the scheduled end, so the punch must be AT/AFTER $prevShift's own
+        //     clock_out — anything earlier is just normal same-day activity, not a
+        //     late checkout.
+        //   - two-day/overnight shift (is_overnight=1): clock_out IS the scheduled,
+        //     expected end of the shift itself — checking out on time or slightly
+        //     early is completely normal, so no lower bound is imposed beyond the
+        //     start of $date itself.
+        if ($prevShift && $prevDate && $prevShift->clock_out && $prevShift->start_check_in_time) {
+            $prevShiftIsOvernight = (int) ($prevShift->is_overnight ?? 0) === 1;
+            $windowStart = $prevShiftIsOvernight
+                ? strtotime($date . ' 00:00:00')
+                : strtotime($prevDate . ' ' . $prevShift->clock_out);
+            $windowEnd = strtotime($date . ' ' . $prevShift->start_check_in_time);
+
+            $plausibleForPrevDay = $temps->filter(function ($t) use ($windowStart, $windowEnd) {
+                $punchTime = strtotime($t->punch_datetime);
+                return $punchTime >= $windowStart && $punchTime < $windowEnd;
+            })->values();
+
+            $lastBeforeCutoff = $plausibleForPrevDay->last();
+        } else {
+            // No resolvable prevShift — fall back to the generic (today-cutoff-based)
+            // candidate, same as before.
+            $lastBeforeCutoff = $beforeCutoff->last();
+        }
+
         $first = $cleanedAfterCutoff->first();
         $last = $cleanedAfterCutoff->last();
 

@@ -233,15 +233,21 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     ->whereBetween('out_date', [$startBoundary, $endBoundary])
                     ->where('approval_status', 1),
                 'hasRosterAssignment' => fn($q) => $q
-                    ->whereBetween('from_date', [$startBoundary, $endBoundary])
-                    ->whereHas('roster', fn($q) =>
-                        $q->where('deleted_at', null)
-                    )
+                    // Extend one day before $startBoundary: the pre-pass resolves the
+                    // shift for $prevDate (= the day BEFORE whichever date is being
+                    // processed) to classify how the previous day's overnight/night-duty
+                    // checkout is closed out. When $startDate is the first date in the
+                    // batch, $prevDate falls one day short of this boundary — without
+                    // the extra day, that roster assignment never gets eager-loaded, so
+                    // the resolver silently falls back to actual_shift_id instead of the
+                    // employee's true roster-assigned shift for that day.
+                    ->whereBetween('from_date', [date('Y-m-d', strtotime($startBoundary . ' -1 day')), $endBoundary])
+                    ->whereHas('roster')
             ])
             ->where(function ($q) use ($endDate) {
                 $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
             })
-            //->where('employee_user_id',591)
+            ->where('employee_user_id',516)
             ->get();
             // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {

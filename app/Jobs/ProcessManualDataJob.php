@@ -193,7 +193,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         // biometric temps are not eager-loaded, so this is a safe no-op per employee
         // (submitted rows already carry their own out_date/out_time explicitly).
         $shiftResolver = function ($row, $date) use ($shifts) {
-            $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+            $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
             $shiftId = $rosterAssignment ? $rosterAssignment->shift_id : $row->actual_shift_id;
             return $shiftId ? $shifts->get($shiftId) : null;
         };
@@ -230,7 +230,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 $carryOverNightStatus = $carryOverKeys[$row->employee_user_id . '|' . $date] ?? null;
 
                 //check roster assignment exist on date = from_date
-                $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
+                $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
                 if($rosterAssignment){
                     $shiftId = $rosterAssignment->shift_id;
                 }else{
@@ -240,6 +240,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
+                
 
                 Log::warning('manual:', ['manualPunch'=>$manualPunch]);
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
