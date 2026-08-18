@@ -487,7 +487,6 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 'payroll_item_count' => count($payrollAccruedItems),
                 'leave_log_count' => count($leaveAchieveLogs),
             ]);
-            DB::beginTransaction();
             try {
                 foreach (array_chunk($prepared, 500) as $chunk) {
                     EmployeeAttendance::insert($chunk);

@@ -57,6 +57,9 @@ class AttendanceProcessingService
         ?array      $manualPunch = null,
         ?int        $carryOverNightStatus = null // 12|13 when this date's only punch was consumed by PreviousDayOutPunchUpdateService to close out the previous day
     ): array {
+
+        $this->systemUserId = $createdUserId ?? $this->systemUserId;
+
         Log::info('Attendance processing started for employee:', ['employee_user_id' => $row->employee_user_id, 'date' => $date]);
         $this->isAbsentInFirstHalf = false;
         $this->leave_application_id = null;
