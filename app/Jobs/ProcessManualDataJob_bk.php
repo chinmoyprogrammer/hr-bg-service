@@ -21,7 +21,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class ProcessManualDataJob extends Job implements ShouldQueue
+class ProcessManualDataJobBk extends Job implements ShouldQueue
 {
     use InteractsWithQueue, Queueable, SerializesModels;
     protected array $payload;
@@ -64,7 +64,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'out_time'         => $item['out_time'] ?? null,
                 'is_corrected'     => $item['is_corrected'] ?? 0,
                 'is_manual'        => $item['is_manual'] ?? 0,
-                'created_user_id'  =>$this->payload['created_user_id'] ?? 1,
+                'created_user_id'  => $item['created_user_id'] ?? 0,
                 'remarks'          => $item['remarks'] ?? null
             ];
         }
@@ -88,7 +88,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         $startBoundary = \Carbon\Carbon::parse($startDate)->startOfDay()->toDateString();
         $endBoundary   = \Carbon\Carbon::parse($endDate)->endOfDay()->toDateString();
         $jobStart      = date('Y-m-d H:i:s');
-        $systemUserId  = $this->payload['created_user_id'] ?? (int) env('SYSTEM_USER_ID', 1);
+        $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
 
         // ── Build a quick lookup: [employee_user_id|date => row] ──────────────
         // Used later to pass in_time / out_time into the service as "manual punch"
@@ -188,22 +188,6 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
         }
 
-        // ── Pre-pass: back-fill the PREVIOUS day's missing out-punch ──────────
-        // Runs before AttendanceProcessingService. On this manual/correction flow
-        // biometric temps are not eager-loaded, so this is a safe no-op per employee
-        // (submitted rows already carry their own out_date/out_time explicitly).
-        $shiftResolver = function ($row, $date) use ($shifts) {
-            $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
-            $shiftId = $rosterAssignment ? $rosterAssignment->shift_id : $row->actual_shift_id;
-            return $shiftId ? $shifts->get($shiftId) : null;
-        };
-        $carryOverKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
-            ->process($officialInfos, $dates, $shiftResolver);
-        Log::info('ProcessManualDataJob previous-day out-punch pre-pass done', [
-            'carry_over_key_count' => count($carryOverKeys),
-            'carry_over_keys' => $carryOverKeys,
-        ]);
-
         // ── Process every submitted employee × date ───────────────────────────
         $prepared            = [];
         $statusLogData       = [];
@@ -225,12 +209,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             );
 
             foreach ($empDates as $date) {
-                // Dates whose only punch was consumed as the previous day's night-shift
-                // checkout carry over as Incomplete In + 12/13 instead of Absent.
-                $carryOverNightStatus = $carryOverKeys[$row->employee_user_id . '|' . $date] ?? null;
-
                 //check roster assignment exist on date = from_date
-                $rosterAssignment = $row->hasRosterAssignment?->where('from_date', $date)?->first();
+                $rosterAssignment = $row->rosterAssignment?->where('from_date', $date)?->first();
                 if($rosterAssignment){
                     $shiftId = $rosterAssignment->shift_id;
                 }else{
@@ -240,7 +220,6 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
                 $publicHoliday = $publicHolidays->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
-                
 
                 Log::warning('manual:', ['manualPunch'=>$manualPunch]);
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
@@ -253,8 +232,6 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $otRequisition,
                     $empLeaveDetails,
                     $manualPunch,
-                    $carryOverNightStatus,
-                    $systemUserId
                 );
 
                 if ($result['skip']) {

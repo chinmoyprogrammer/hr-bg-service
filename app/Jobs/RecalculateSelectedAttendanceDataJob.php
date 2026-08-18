@@ -152,6 +152,21 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
         }
 
+        // ── Pre-pass: back-fill the PREVIOUS day's missing out-punch ──────────
+        // Runs before AttendanceProcessingService (centralised overnight / night-shift
+        // cross-day checkout handling). Returns skip keys for dates consumed as the
+        // previous day's night checkout.
+        $shiftResolver = function ($row, $date) use ($shifts) {
+            $shiftId = $row->shift_id ?? 1;
+            return $shifts->get($shiftId);
+        };
+        $prevDaySkipKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
+            ->process($officialInfos, $this->dates, $shiftResolver);
+        Log::info('RecalculateSelectedAttendanceDataJob previous-day out-punch pre-pass done', [
+            'skip_key_count' => count($prevDaySkipKeys),
+            'skip_keys' => array_keys($prevDaySkipKeys),
+        ]);
+
         // ── Process every submitted employee × date ───────────────────────────
         $prepared            = [];
         $statusLogData       = [];
@@ -170,6 +185,15 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             $empDates = $this->dates;
 
             foreach ($empDates as $date) {
+                // Skip dates already consumed as the previous day's night-shift checkout.
+                if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
+                    Log::info('RecalculateSelectedAttendanceDataJob skipped date consumed as previous-day night checkout', [
+                        'employee_user_id' => $row->employee_user_id,
+                        'date' => $date,
+                    ]);
+                    continue;
+                }
+
                 $shiftId       = $row->shift_id ?? Shift::find(1)->id;
                 $shift         = $shifts->get($shiftId);
                 $publicHoliday = $publicHolidays->get($date);
