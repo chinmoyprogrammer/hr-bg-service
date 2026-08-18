@@ -247,7 +247,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->where(function ($q) use ($endDate) {
                 $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
             })
-            ->where('employee_user_id',516)
+            //->where('employee_user_id',516)
             ->get();
             // dd($officialInfos);
             /* ->whereIn('emp_code', function ($q) {
