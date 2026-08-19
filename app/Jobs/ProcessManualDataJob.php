@@ -254,6 +254,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     $empLeaveDetails,
                     $manualPunch,
                     $carryOverNightStatus,
+                    $systemUserId
                 );
 
                 if ($result['skip']) {
