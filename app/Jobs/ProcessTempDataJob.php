@@ -427,7 +427,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $otRequisition,
                         $empLeaveDetails,
                         null,
-                        $carryOverNightStatus
+                        $carryOverNightStatus,
+                        null
                     );
 
                     Log::info('ProcessTempDataJob iteration result', [

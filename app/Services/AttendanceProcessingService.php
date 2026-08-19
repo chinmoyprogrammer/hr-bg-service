@@ -55,7 +55,8 @@ class AttendanceProcessingService
         ?object    $otRequisition,
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
         ?array      $manualPunch = null,
-        ?int        $carryOverNightStatus = null // 12|13 when this date's only punch was consumed by PreviousDayOutPunchUpdateService to close out the previous day
+        ?int        $carryOverNightStatus = null, // 12|13 when this date's only punch was consumed by PreviousDayOutPunchUpdateService to close out the previous day
+        ?int        $createdUserId = null
     ): array {
 
         $this->systemUserId = $createdUserId ?? $this->systemUserId;
