@@ -589,7 +589,11 @@ class PreviousDayOutPunchUpdateService
         // Upper bound (both shift types): must be before $prevShift's own next
         // start_check_in_time — once that passes, the same shift would be starting
         // its next cycle, so an even-later punch can't still be "closing out"
-        // $prevDate.
+        // $prevDate. But roster assignments can change day to day, so if $date's
+        // OWN shift starts even earlier than that, the bound must tighten to
+        // $shift's start_check_in_time instead — once $date's own shift window
+        // opens, any later punch belongs to $date's own check-in/out, not to a
+        // leftover checkout from $prevDate's (possibly different) shift.
         //
         // Lower bound differs by shift type:
         //   - single-day shift (is_overnight=0): the whole scenario IS overtime past
@@ -606,6 +610,9 @@ class PreviousDayOutPunchUpdateService
                 ? strtotime($date . ' 00:00:00')
                 : strtotime($prevDate . ' ' . $prevShift->clock_out);
             $windowEnd = strtotime($date . ' ' . $prevShift->start_check_in_time);
+            if ($shift && $shift->start_check_in_time) {
+                $windowEnd = min($windowEnd, strtotime($date . ' ' . $shift->start_check_in_time));
+            }
 
             $plausibleForPrevDay = $temps->filter(function ($t) use ($windowStart, $windowEnd) {
                 $punchTime = strtotime($t->punch_datetime);
