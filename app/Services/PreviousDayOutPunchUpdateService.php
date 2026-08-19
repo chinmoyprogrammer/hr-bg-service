@@ -219,12 +219,12 @@ class PreviousDayOutPunchUpdateService
             ->where('is_manual', 0)
             ->where('is_corrected', 0)
             ->whereNotNull('in_time')
-            // Defense in depth: only a genuinely INCOMPLETE previous day (no out_time
-            // yet) should ever be touched here. Without this, any already-complete
-            // record matching the date/in_time criteria would get silently
-            // overwritten the moment ANY later punch happens to pass the
-            // plausibility window check above.
-            ->whereNull('out_time')
+            // is_manual=0 / is_corrected=0 is the actual protection against
+            // touching manually-entered or corrected records. out_time is
+            // intentionally NOT required to be null here: a later cron run may see
+            // a newer, later punch (e.g. the real 07:30 checkout after an earlier
+            // run already backfilled 03:50 from a partial punch set) and must be
+            // able to upgrade out_time to it, not get stuck on the first guess.
             ->first();
 
         if (!$prevAttendance) {
@@ -349,12 +349,12 @@ class PreviousDayOutPunchUpdateService
             ->where('is_manual', 0)
             ->where('is_corrected', 0)
             ->whereNotNull('in_time')
-            // Defense in depth: only a genuinely INCOMPLETE previous day (no out_time
-            // yet) should ever be touched here. Without this, any already-complete
-            // record matching the date/in_time criteria would get silently
-            // overwritten the moment ANY later punch happens to pass the
-            // plausibility window check above.
-            ->whereNull('out_time')
+            // is_manual=0 / is_corrected=0 is the actual protection against
+            // touching manually-entered or corrected records. out_time is
+            // intentionally NOT required to be null here: a later cron run may see
+            // a newer, later punch (e.g. the real 07:30 checkout after an earlier
+            // run already backfilled 03:50 from a partial punch set) and must be
+            // able to upgrade out_time to it, not get stuck on the first guess.
             ->first();
 
         if (!$prevAttendance) {
