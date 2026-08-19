@@ -119,7 +119,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             'hasRosterAssignment' => fn($q) => $q
                 ->whereBetween('from_date', [$startBoundary, $endBoundary])
                 ->whereHas('roster', fn($q) =>
-                    $q->where('deleted_at', null)
+                    $q->whereNull('deleted_at')->whereNull('deleted_by')
                 )
         ])
         ->whereIn('employee_user_id', $empUserIds)
