@@ -203,6 +203,12 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $jobStart      = date('Y-m-d H:i:s');
             $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
 
+            // The previous-day-checkout pre-pass backfills date D using date D+1's
+            // early punches. When the pull range ends at $endDate, D+1's punches
+            // must still be visible (peeked, not persisted) or $endDate's own
+            // out-punch stays null until D+1 is pulled separately.
+            $peekEndBoundary = \Carbon\Carbon::parse($endDate)->addDay()->endOfDay()->toDateString();
+
             // ── Date range array ──────────────────────────────────────────────────
             $dates = collect(\Carbon\Carbon::parse($startDate)->range(\Carbon\Carbon::parse($endDate)))
                 ->map(fn($d) => $d->format('Y-m-d'))
@@ -214,7 +220,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $officialInfos = EmployeeOfficialInformation::with([
                 'hasSeparationApplication',
                 'employeeAttendanceTemps' => fn($q) => $q
-                    ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $endBoundary])
+                    // Upper bound extended to $peekEndBoundary (endDate+1): the
+                    // pre-pass needs D+1's early punches to backfill $endDate's own
+                    // checkout, even though D+1 itself is not in $dates and gets no
+                    // attendance row this run.
+                    ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $peekEndBoundary])
                     ->orderBy('punch_datetime'),
                 'employeeOtPolicy'        => fn($q) => $q
                     ->where('effective_date', '<=', $startBoundary)->where('status', 1),
@@ -241,7 +251,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     // the extra day, that roster assignment never gets eager-loaded, so
                     // the resolver silently falls back to actual_shift_id instead of the
                     // employee's true roster-assigned shift for that day.
-                    ->whereBetween('from_date', [date('Y-m-d', strtotime($startBoundary . ' -1 day')), $endBoundary])
+                    ->whereBetween('from_date', [date('Y-m-d', strtotime($startBoundary . ' -1 day')), $peekEndBoundary])
                     ->whereHas('roster', function($q) {
                         $q->whereNull('deleted_by')->whereNull('deleted_at');
                     })
@@ -353,15 +363,27 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ]);
                 return $shiftId ? $shifts->get($shiftId) : null;
             };
+            // Peek one day past $endDate so $endDate's own out-punch can be
+            // backfilled from D+1's early punches in the same run. This date is
+            // used ONLY by the pre-pass (to resolve prevDate=$endDate); the main
+            // attendance-creation loop below still iterates $dates unchanged, so no
+            // attendance row is created/touched for the peek date itself.
+            $backfillDates = collect($dates)
+                ->push(\Carbon\Carbon::parse($endDate)->addDay()->format('Y-m-d'))
+                ->unique()
+                ->values()
+                ->toArray();
+
             Log::info('ProcessTempDataJob previous-day out-punch pre-pass start', [
                 'official_info_count' => count($officialInfos),
                 'dates' => $dates,
+                'backfill_dates' => $backfillDates,
                 'shift_resolver' => $shiftResolver,
                 'shiftId' => $shiftId,
                 'rosterAssignment' => $rosterAssignment,
             ]);
             $carryOverKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
-                ->process($officialInfos, $dates, $shiftResolver);
+                ->process($officialInfos, $backfillDates, $shiftResolver);
             Log::info('ProcessTempDataJob previous-day out-punch pre-pass done', [
                 'carry_over_key_count' => count($carryOverKeys),
                 'carry_over_keys' => $carryOverKeys,
