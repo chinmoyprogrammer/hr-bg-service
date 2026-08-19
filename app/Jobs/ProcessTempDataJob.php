@@ -242,7 +242,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     // the resolver silently falls back to actual_shift_id instead of the
                     // employee's true roster-assigned shift for that day.
                     ->whereBetween('from_date', [date('Y-m-d', strtotime($startBoundary . ' -1 day')), $endBoundary])
-                    ->whereHas('roster')
+                    ->whereHas('roster', function($q) {
+                        $q->whereNull('deleted_by')->whereNull('deleted_at');
+                    })
             ])
             ->where(function ($q) use ($endDate) {
                 $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
@@ -344,6 +346,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 } else {
                     $shiftId = $row->actual_shift_id;
                 }
+                Log::info('ProcessTempDataJob shift resolver', [
+                    'row' => $row,
+                    'date' => $date,
+                    'shiftId' => $shiftId,
+                ]);
                 return $shiftId ? $shifts->get($shiftId) : null;
             };
             Log::info('ProcessTempDataJob previous-day out-punch pre-pass start', [
