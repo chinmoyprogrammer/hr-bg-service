@@ -133,7 +133,10 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                     null,
                     null,
                     null,
-                    $keyedLeaveDetails
+                    $keyedLeaveDetails,
+                    null,
+                    null,
+                    null
                 );
 
                 Log::warning('ProcessTempDataJob: dates span different calendar months', ['payload' => $result]);
