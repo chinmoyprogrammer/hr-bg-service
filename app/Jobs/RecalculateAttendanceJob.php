@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceStatusLog;
 use App\Models\EmployeeLeaveAchieveLog;
+use App\Models\EmployeeLeaveBalance;
 use App\Models\EmployeeOfficialInformation;
 use App\Models\Holiday;
 use App\Models\LeaveApplicationDetail;
@@ -84,7 +85,38 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
             $statusLogKeyIndex   = [];
             $payrollKeyIndex     = [];
             $leaveLogKeyIndex    = [];
+
+
+            $attRecordIds = EmployeeAttendance::whereIn('date', $leaveDates )->whereRaw('is_corrected = 0 AND is_manual = 0')->pluck('id');
+
+            if ($attRecordIds->isNotEmpty()) {
+                $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
+                    ->selectRaw('SUM(leave_count) as leave_count, employee_leave_balance_id')
+                    ->groupBy('employee_leave_balance_id')
+                    ->get();
+                /* if($totalLeaveAchieved->isNotEmpty()){
+                    Log::warning('totalLeaveAchieved:', ['totalLeaveAchieved:' => $totalLeaveAchieved]);
+                    return;
+                } */
+                foreach ($totalLeaveAchieved as $item) {
+                    EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
+                        ->decrement('current_balance', $item->leave_count);
+                }
+
+                EmployeeAttendanceStatusLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
+                PayrollAccruedAllowanceIncome::whereIn('employee_attendance_id', $attRecordIds)->delete();
+                EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
+                EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
+            }
+
+
+
             foreach ($leaveDates as $key => $date) {
+                if( strtotime(date('Y-m-d')) < strtotime($date))
+                {
+                    Log::warning('RecalculateAttendanceJob: Date ' . $date . ' is in the future, skipping');
+                    continue;
+                }
                 $row = EmployeeOfficialInformation::with([
                     'employeeAttendanceTemps' => function ($query) {
                         $query->whereRaw('1 = 0'); // Forces empty result
