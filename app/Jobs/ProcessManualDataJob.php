@@ -120,7 +120,10 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 ->whereBetween('from_date', [$startBoundary, $endBoundary])
                 ->whereHas('roster', fn($q) =>
                     $q->whereNull('deleted_at')->whereNull('deleted_by')
-                )
+                ),
+                'hasNonWeekendHolidays' => fn($q) => $q
+                    ->whereBetween('date', [$startBoundary, $endBoundary])
+                    ->where('holiday_type_id', 8)
         ])
         ->whereIn('employee_user_id', $empUserIds)
         ->where(function ($q) use ($endDate) {
@@ -141,13 +144,14 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             ->get()
             ->groupBy('employee_user_id');
 
-        $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
-            ->whereNull('employee_user_id')
-            ->get()
-            ->keyBy('date');
+        // $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
+        //     ->whereNull('employee_user_id')
+        //     ->get()
+        //     ->keyBy('date');
 
         $employeeHolidaysByEmp = Holiday::whereIn('employee_user_id', $empUserIds)
             ->whereBetween('date', [$startDate, $endDate])
+            ->where('holiday_type_id', 8)
             ->get()
             ->groupBy('employee_user_id')
             ->map(fn($c) => $c->keyBy('date'));
@@ -238,7 +242,8 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 }
                 $shift   = $shiftId ? $shifts->get($shiftId) : null;
                 $manualPunch   = $manualPunchMap[$row->employee_user_id . '|' . $date];
-                $publicHoliday = $publicHolidays->get($date);
+                // $publicHoliday = $publicHolidays->get($date);
+                $publicHoliday = $row->hasNonWeekendHolidays?->where('date', $date)?->first();
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                 
 

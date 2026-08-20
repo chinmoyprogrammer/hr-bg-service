@@ -254,7 +254,10 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     ->whereBetween('from_date', [date('Y-m-d', strtotime($startBoundary . ' -1 day')), $peekEndBoundary])
                     ->whereHas('roster', function($q) {
                         $q->whereNull('deleted_by')->whereNull('deleted_at');
-                    })
+                    }),
+                'hasNonWeekendHolidays' => fn($q) => $q
+                    ->whereBetween('date', [$startBoundary, $endBoundary])
+                    ->where('holiday_type_id', '<>', 8)
             ])
             ->where(function ($q) use ($endDate) {
                 $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
@@ -283,9 +286,9 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->get()
                 ->groupBy('employee_user_id');
 
-            $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
-                ->whereNull('employee_user_id')
-                ->get()->keyBy('date');
+            // $publicHolidays = Holiday::whereBetween('date', [$startDate, $endDate])
+            //     ->whereNull('employee_user_id')
+            //     ->get()->keyBy('date');
             /* if($publicHolidays->isNotEmpty()){
                 Log::warning('public holiday:', ['public holiday:' => $publicHolidays]);
                 return;
@@ -293,6 +296,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
 
             $employeeHolidaysByEmp = Holiday::whereBetween('date', [$startDate, $endDate])
                 ->whereNotNull('employee_user_id')
+                ->where('holiday_type_id', 8)
                 ->get()
                 ->groupBy('employee_user_id')
                 ->map(fn($c) => $c->keyBy('date'));
@@ -427,7 +431,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                         $shiftId = $row->actual_shift_id;
                     }
                     $shift   = $shiftId ? $shifts->get($shiftId) : null;
-                    $publicHoliday  = $publicHolidays->get($date);
+                    // $publicHoliday  = $publicHolidays->get($date);
+                    $publicHoliday  = $row->hasNonWeekendHolidays?->where('date', $date)?->first();
                     $empHoliday     = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                     Log::info('ProcessTempDataJob iteration start', [
                         'employee_user_id' => $row->employee_user_id,
