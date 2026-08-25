@@ -85,12 +85,12 @@ class AttendanceProcessingService
             $fakeTemps = collect();
             if (!empty($manualPunch['in_time'])) {
                 $fakeTemps->push((object)[
-                    'punch_datetime' => $date . ' ' . $manualPunch['in_time'],
+                    'punch_datetime' => date('Y-m-d',strtotime($date)) . ' ' . $manualPunch['in_time'],
                 ]);
             }
             if (!empty($manualPunch['out_time'])) {
                 $fakeTemps->push((object)[
-                    'punch_datetime' => $outDate . ' ' . $manualPunch['out_time'],
+                    'punch_datetime' => date('Y-m-d',strtotime($outDate)) . ' ' . $manualPunch['out_time'],
                 ]);
             }
             $row->employeeAttendanceTemps = $fakeTemps;
@@ -462,12 +462,12 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
     private function resolveManualFirstLast(array $manualPunch, string $date): array
     {
         $first = !empty($manualPunch['in_time'])
-            ? (object) ['punch_datetime' => $date . ' ' . $manualPunch['in_time']]
+            ? (object) ['punch_datetime' => date('Y-m-d',strtotime($date)) . ' ' . $manualPunch['in_time']]
             : null;
 
         $outDate = $manualPunch['out_date'] ?? $date;
         $last = !empty($manualPunch['out_time'])
-            ? (object) ['punch_datetime' => $outDate . ' ' . $manualPunch['out_time']]
+            ? (object) ['punch_datetime' => date('Y-m-d',strtotime($outDate)) . ' ' . $manualPunch['out_time']]
             : null;
 
         return [$first, $last, null];

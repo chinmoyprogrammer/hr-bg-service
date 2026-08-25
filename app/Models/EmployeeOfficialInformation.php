@@ -188,5 +188,14 @@ class EmployeeOfficialInformation extends Model
         return $this->hasMany(RosterAssignment::class, 'employee_user_id', 'employee_user_id');
     }
 
+
+    // has non weekend holidays
+    public function hasNonWeekendHolidays()
+    {
+        return $this->hasMany(Holiday::class, 'employee_user_id', 'employee_user_id')
+        ->where('holiday_type_id', '<>', 8)
+        ;
+    }
+
 }
 

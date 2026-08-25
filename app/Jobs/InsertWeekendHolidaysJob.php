@@ -80,9 +80,10 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
                 foreach ($this->generateWeekendDates($start, $end, $dow, $isAlternated, $altStart) as $date) {
                     $i++;
                     $dateStr = $date->toDateString();
-                    $key = $dateStr . '|' . $weekendHolidayTypeId.$employee->employee_user_id;
+                    $empUserId = (int) $employee->employee_user_id;
+                    $key = $dateStr . '|' . $weekendHolidayTypeId . '|' . $empUserId;
                     $rowsByKey[$key] = $this->buildHolidayRow([
-                        'employee_user_id' => $rule->employee_user_id,
+                        'employee_user_id' => $empUserId,
                         'name' => 'Weekend',
                         'date' => $dateStr,
                         'holiday_type_id' => $weekendHolidayTypeId,
@@ -98,19 +99,21 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
         // dd("Total rows: ", $i);
 
         /*
-         * Public holidays (global-only): inserted once per date/type.
-         * To avoid duplicates, only insert global public holidays when processing ALL employees.
+         * Public holidays: assign to every in-scope employee.
+         * - If `employeeIds` is provided: assign to those employees only.
+         * - If empty: assign to ALL loaded employees.
          */
-        //Log::info('Inserting weekend holidays for year ',[$employeeIds]);
+        //Log::info('Inserting public holidays for year ',[$employeeIds]);
 
-        if (empty($employeeIds) || count($employeeIds) == 0) {
-            // dd($this->buildGlobalPublicHolidayRows($year, $systemUserId, $now), $year,$systemUserId,$now);
-            //Log::info('Inserting global public holidays for year ->' . $this->buildGlobalPublicHolidayRows($year, $systemUserId, $now));
+        $globalHolidayRows = $this->buildGlobalPublicHolidayRows($year, $systemUserId, $now);
 
-            foreach ($this->buildGlobalPublicHolidayRows($year, $systemUserId, $now) as $row) {
-                //Log::info('Inserting global public holiday: ' . $row['name'], $row);
-                $key = 'global|' . $row['date'] . '|' . $row['holiday_type_id'];
-                $rowsByKey[$key] = $row;
+        foreach ($globalHolidayRows as $globalRow) {
+            foreach ($employees as $employee) {
+                $empUserId = (int) $employee->employee_user_id;
+                $empRow = $globalRow;
+                $empRow['employee_user_id'] = $empUserId;
+                $key = $globalRow['date'] . '|' . $globalRow['holiday_type_id'] . '|' . $empUserId;
+                $rowsByKey[$key] = $empRow;
             }
         }
 
@@ -120,12 +123,19 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
          * - If `employee_user_ids` is provided: delete rows for those employees only.
          * - If not provided: delete all rows for that year (including global rows).
          */
-        DB::transaction(function () use ($year, $employeeIds, $weekendHolidayTypeId, $rowsByKey) {
+        DB::transaction(function () use ($year, $employeeIds, $rowsByKey) {
+            // Delete public holidays stored as global (employee_user_id IS NULL) for the year.
+            DB::table('holidays')
+                ->where('year', $year)
+                ->whereNull('employee_user_id')
+                ->delete();
+
+            // Delete per-employee holidays for the year.
+            // - If specific employees: delete all their holidays (any holiday_type_id).
+            // - If no employees specified: delete ALL rows for the year.
             $deleteQuery = DB::table('holidays')->where('year', $year);
-           if (!empty($employeeIds) && count($employeeIds) > 0)  {
-                $deleteQuery->where('holiday_type_id', $weekendHolidayTypeId)
-                ->whereIn('employee_user_id', $employeeIds)
-                ;
+            if (!empty($employeeIds)) {
+                $deleteQuery->whereIn('employee_user_id', $employeeIds);
             }
             $deleteQuery->delete();
 
@@ -357,22 +367,24 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
         
         $employees = $employeesQuery->get();
         
-        // Preprocess all holidays from rowsByKey
+        // Preprocess all holidays from rowsByKey.
+        // NOTE: Public holidays are now stored with an explicit employee_user_id
+        // (expanded per-employee before insert), so the legacy global-null
+        // expansion path is no longer needed and has been removed.
         $allHolidays = [];
         foreach ($rowsByKey as $row) {
             $dateKey = $row['date'];
             $empId = $row['employee_user_id'];
-            
-            // For global holidays (empId is null), we'll add them to all employees
+
+            // Legacy guard: if any row still carries a null employee_user_id
+            // (e.g. from an unfinished old run), skip it silently rather than
+            // assigning it to every employee here. All valid rows produced by
+            // this job always have employee_user_id populated.
             if ($empId === null) {
-                foreach ($employees as $e) {
-                    if (!isset($allHolidays[$e->employee_user_id][$dateKey])) {
-                        $allHolidays[$e->employee_user_id][$dateKey] = true;
-                    }
-                }
-            } else {
-                $allHolidays[$empId][$dateKey] = true;
+                continue;
             }
+
+            $allHolidays[$empId][$dateKey] = true;
         }
         
         // Preprocess all weekends for each employee
