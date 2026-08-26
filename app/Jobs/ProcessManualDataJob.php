@@ -111,7 +111,9 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                     date('Y-m-01', strtotime($startBoundary)),
                     date('Y-m-t',  strtotime($endBoundary)),
                 ])
-                ->where('attendance_status', 2),
+                ->where('attendance_status', 2)
+                ->whereHas('attendance')
+                ->with(['attendance:id,shift_id,shift_start_time,in_time,out_time']),
             'hasEarlyOutRequests' => fn($q) => $q
                 ->whereNull('deleted_at')
                 ->whereBetween('out_date', [$startBoundary, $endBoundary])
@@ -190,6 +192,16 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             PayrollAccruedAllowanceIncome::whereIn('employee_attendance_id', $attRecordIds)->delete();
             EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
             EmployeeAttendance::whereIn('id', $attRecordIds)->delete();
+
+            $officialInfos->load(['lateDays' => fn($q) => $q
+                ->whereBetween('attendance_date', [
+                    date('Y-m-01', strtotime($startBoundary)),
+                    date('Y-m-t',  strtotime($endBoundary)),
+                ])
+                ->where('attendance_status', 2)
+                ->whereHas('attendance')
+                ->with(['attendance:id,shift_id,shift_start_time,in_time,out_time'])
+            ]);
         }
 
         // ── Pre-pass: back-fill the PREVIOUS day's missing out-punch ──────────
