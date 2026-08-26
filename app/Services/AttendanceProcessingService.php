@@ -686,16 +686,25 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             $row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)===0
         ]); */
 
-        if (
-            $lateDeductionPolicy->deduction_basis === 'Day' &&
-            (!empty($row->lateDays) && ($row->lateDays->count() % ($lateDeductionPolicy->max_late_days + 1)===0))
-        ) {
+        Log::info('lateDeductionPolicy:', [
+            'deduction_basis'=>$lateDeductionPolicy->deduction_basis, 
+            'check_exist'=>empty($row->lateDays),
+            'count'=>$row->lateDays->count(),
+            'max_late' => $lateDeductionPolicy->max_late_days + 1,
+            'data' => $row->lateDays,
+            'row' => $row
+        ]);
+        $totalLateDays = $row->lateDays->count() + 1;
+
+        if ($lateDeductionPolicy->deduction_basis === 'Day' && !empty($row->lateDays) && $totalLateDays > $lateDeductionPolicy->max_late_days)
+        {
             $employee_user_id = $row->employee_user_id;
             /* Log::info('lateDeductionPolicy:', [
                 'deduction_basis'=>$lateDeductionPolicy->deduction_basis, 
                 'check_exist'=>empty($row->lateDays),
                 'count'=>$row->lateDays->count(),
-                'max_late' => $lateDeductionPolicy->max_late_days + 1
+                'max_late' => $lateDeductionPolicy->max_late_days + 1,
+                'data' => $row->lateDays
             ]); */
             //Log::info('processLateDeduction:', [$row, $date, $shift, $first, $now]);
             // Purge existing month records and rebuild from scratch
@@ -711,7 +720,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
             
 
-            $lateCount = !empty($row->lateDays) ? $row->lateDays->count() : 0;
+            $lateCount = $totalLateDays;
             $cycle     = $lateDeductionPolicy->max_late_days + 1;
             $rowsToInsert = intdiv($lateCount, $cycle);
 
@@ -730,32 +739,40 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
                 $lateRecord   = LateAttendanceRecord::create($lateRecordArr);
                 $totalSeconds = 0;
 
-                Log::info("loop_".$i, ['employee_user_id'=>$row->employee_user_id, 'lateRecordArr'=>$lateRecordArr, 'lateRecord'=>$lateRecord]);
+                //Log::info("loop_".$i, ['employee_user_id'=>$row->employee_user_id, 'lateRecordArr'=>$lateRecordArr, 'lateRecord'=>$lateRecord]);
 
-                for ($j = 0; $j < $cycle && ($i * $cycle + $j) < $lateCount; $j++) {
+                for ($j = 0; $j < $cycle && ($i * $cycle + $j) < $totalLateDays; $j++) {
                     $lateDay = $row->lateDays->sortBy('attendance_date')->values()[$i * $cycle + $j] ?? null;
                     if (!$lateDay) {
                         continue;
                     }
-
-                    $shiftCheckinTime = Carbon::parse($date . ' ' . ($shift->check_in ?? '09:00:00'));
-                    $lateSeconds      = Carbon::parse($first->punch_datetime)->diffInSeconds($shiftCheckinTime);
+                    //Log::info("loop_inside: ".$i, ['employee_user_id'=>$row->employee_user_id, 'lateDay'=>$lateDay, 'attendance'=>$lateDay ?? null]);
+                    $attendance = $lateDay->attendance ?? null;
+                    if (!$attendance) {
+                        continue;
+                    }
+                    //Log::info("loop_inside: if all pass: ".$i, ['employee_user_id'=>$row->employee_user_id, 'lateDay'=>$lateDay]);
+                    $shiftId = $attendance->shift_id ?? $shift->id;
+                    $shiftStartTime = $attendance->shift_start_time ?? '09:00:00';
+                    $punchInTime = $attendance->in_time ?? null;
+                    $punchOutTime = $attendance->out_time ?? null;
+                    
+                    $shiftCheckinTime = Carbon::parse($date . ' ' . $shiftStartTime);
+                    $lateSeconds      = Carbon::parse($punchInTime)->diffInSeconds($shiftCheckinTime);
                     $totalSeconds    += $lateSeconds;
 
                     LateAttendanceRecordDetail::create([
                         'late_attendance_record_id' => $lateRecord->id,
                         'date'                      => $lateDay->attendance_date,
                         'late_seconds'              => $lateSeconds,
-                        'shift_id'                  => $shift->id,
-                        'in_time'                   => $first->punch_datetime,
-                        'out_time'                  => $last->punch_datetime ?? null,
+                        'shift_id'                  => $shiftId,
+                        'in_time'                   => $punchInTime,
+                        'out_time'                  => $punchOutTime,
                         'created_at'                => $now,
                         'year'                      => date('Y', strtotime($date)),
                         'month'                     => date('m', strtotime($date)),
-
                     ]);  
                 }
-
                 LateAttendanceRecord::where('id', $lateRecord->id)
                     ->update(['late_minutes' => $totalSeconds / 60]);
             }

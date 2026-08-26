@@ -10,6 +10,7 @@ use App\Jobs\RecalculateAttendanceJob;
 use App\Jobs\ConfirmProvisionalEmployeesJob;
 use App\Jobs\SyncRosterAssignmentsJob;
 use App\Jobs\FiscalYearClosingJob;
+use App\Jobs\ProcessSandwichedHolidaysJob;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -44,6 +45,7 @@ class RabbitMQJob extends Job implements ShouldQueue
         $message = is_string($this->data) ? $this->data : json_encode($this->data);
 
         try {
+            Log::info('RabbitMQJob received message', ['message' => $message]);
             $queueConnection = app('queue')->connection('rabbitmq');
             $currentQueue = method_exists($this->job, 'getQueue') ? $this->job->getQueue() : null;
             $targetQueue = (is_string($this->queueName) && trim($this->queueName) !== '') ? $this->queueName : null;
@@ -95,6 +97,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                 }
                 if ($targetQueue === 'cacheRegenerate_queue') {
                     (new CacheRegenerateJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
+                if ($targetQueue === 'processSandwichedHolidays_queue') {
+                    (new ProcessSandwichedHolidaysJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
 
