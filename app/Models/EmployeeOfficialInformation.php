@@ -197,5 +197,11 @@ class EmployeeOfficialInformation extends Model
         ;
     }
 
+    // has payroll_pre_salary_sheet_deductions
+    public function hasPayrollPreSalarySheetDeductions()
+    {
+        return $this->hasMany(PayrollPreSalarySheetDeduction::class, 'employee_user_id', 'employee_user_id');
+    }
+
 }
 

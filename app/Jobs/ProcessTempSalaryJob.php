@@ -101,7 +101,14 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 },
                 'hasOfficialInformation.hasMealLoanAitPfEtcPauses' => function ($query) {
                     $query->whereNull('deleted_at')->whereNull('deleted_by');
-                }
+                },
+                'hasOfficialInformation.hasPayrollPreSalarySheetDeductions' => function ($query) use ($payload) {
+                    $query->whereNull('deleted_at')
+                    ->whereNull('deleted_by')
+                    ->where('year', date('Y', strtotime($payload['salary_calculate_month_year'])))
+                    ->where('month', date('m', strtotime($payload['salary_calculate_month_year'])))
+                    ;
+                },
             ]
         )
             ->where('status', 1)
@@ -123,6 +130,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 //Log::info("Basic Salary: ", ['basicSalary' => $basicSalary]);
                 $gross_salary_of_1_day = $user->hasOfficialInformation->gross_salary / date('t', strtotime($payload['salary_calculate_month_year']));
                 $basic_salary_of_1_day =  $basicSalary / date('t', strtotime($payload['salary_calculate_month_year']));
+
+
+                //.... todo:: need to reconstruct this part with new logic, kaaj cholche
                 if ($user->loans?->count() > 0) {
                     $total_loan_amount = 0;
                     foreach ($user->loans as $loan) {
@@ -180,6 +190,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     }
                 }
 
+                //... calculate late deductions
                 $total_present_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 1)->count() ?? 0;
                 $deductable_late_days = $user->hasOfficialInformation->hasLateAttendanceRecords?->count() ?? 0; // this is basically for "deductable" late attendance records
 
@@ -207,18 +218,38 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $late_deductable_amount = $salary * ($deductable_late_minutes / 60);
                     }
 
+                    //... need to check that late deduction amount already in "payroll_pre_salary_sheet_deductions" table or not
+                    $existedLateDeductionRows = $user
+                        ->hasOfficialInformation
+                        ->hasPayrollPreSalarySheetDeductions?->
+                        where('employee_user_id', $user->id)->where('type', 'late')
+                        ;
+
+
+                    $isLateDeductionExist = $existedLateDeductionRows->count() > 0;
+
                     if ($late_deductable_amount > 0) {
-                        $total_deductable += $late_deductable_amount;
-                        $PayrollPreSalarySheetDeduction[] = [
-                            'salary_sheet_temp_id' => null,
-                            'employee_id_for_mapping' => $user->id,
-                            'employee_user_id' => $user->id,
-                            'child_data_identifier_key_incoming' => 'late_attendance_records_' . $hasLateAttendanceRecordsIds,
-                            'amount' => $late_deductable_amount,
-                            'type' => 'late',
-                            'created_at' => date('Y-m-d H:i:s'),
-                            'created_user_id' => getUserId(),
-                        ];
+
+                        if($isLateDeductionExist == false)
+                        {
+                            $total_deductable += $late_deductable_amount;
+                            $PayrollPreSalarySheetDeduction[] = [
+                                'salary_sheet_temp_id' => null,
+                                'employee_id_for_mapping' => $user->id,
+                                'employee_user_id' => $user->id,
+                                'child_data_identifier_key_incoming' => 'late_attendance_records_' . $hasLateAttendanceRecordsIds,
+                                'amount' => $late_deductable_amount,
+                                'type' => 'late',
+                                'created_at' => date('Y-m-d H:i:s'),
+                                'created_user_id' => getUserId(),
+                            ];
+                        }
+                        else
+                        {
+                            $total_deductable += $existedLateDeductionRows->amount;
+                            $late_deductable_amount = $existedLateDeductionRows->amount;
+                        }
+
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
@@ -231,6 +262,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     }
                 }
 
+                //... calculate meal deductions
                 $total_meal_cost_this_month = 0;
                 if ($total_present_days > 0 && $user->hasOfficialInformation->is_mealable == 1 && $user->hasOfficialInformation->is_free_meal == 0) {
                     $mealPauseCount = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
@@ -328,7 +360,40 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 }
                 //...... calculate late deductions
                 //.... send notification to every employee that his/her salary is processed
-                //deduction type -> 'loan','pr','absent','pf','meal','late','ait', 'ot'
+                //deduction type -> 'loan','pr-done','absent-done','pf-done','meal-done','late-done','ait-done', 'ot'
+
+                //...... calculate absent deductions
+                $absentDays = $user->hasOfficialInformation->attendanceLogs->where('attendance_status', 0)->count();
+                $absentDeduction = $absentDays * $gross_salary_of_1_day; // $basic_salary_of_1_day
+                if($absentDeduction > 0){
+                    $total_deductable += $absentDeduction;
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'child_data_identifier_key_incoming' => 'absent_deduction_' . $user->id . '_' . $payload['salary_calculate_month_year'],
+                        'amount' => $absentDeduction,
+                        'type' => 'absent',
+                        'created_at' => date('Y-m-d H:i:s'),
+                        'created_user_id' => getUserId(),
+                    ];
+
+                    $PayrollSalarySheetHeadsTemp[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'head_id' => 16, //absent
+                        'value' => $absentDeduction,
+                        'is_earning' => 0,
+                        'created_user_id' => getUserId(), // todo:: need a system user id
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+
+
+                }
+
+
+
                 // employee AIT calculaiton
                 if ($user->hasOfficialInformation->ait_eligible == 1) {
                     $hasAitPause = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
@@ -500,11 +565,11 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                     if ($oldIds->isNotEmpty()) {
                         DB::table('payroll_salary_sheet_heads_temp')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
-                        DB::table('payroll_pre_salary_sheet_deductions')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
-                        DB::table('payroll_salary_loan_advance_n_other_installments')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
-                        DB::table('payroll_accrued_allowance_income')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
-                        DB::table('employee_pf_contribution')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
                         DB::table('payroll_salary_sheet_temp')->whereIn('id', $oldIds)->delete();
+                        DB::table('payroll_pre_salary_sheet_deductions')->whereIn('salary_sheet_temp_id', $oldIds)->delete(); // todo:: need to reconstruct this part with new logic
+                        DB::table('payroll_salary_loan_advance_n_other_installments')->whereIn('salary_sheet_temp_id', $oldIds)->delete(); // todo:: need to reconstruct this part with new logic
+                        //DB::table('payroll_accrued_allowance_income')->whereIn('salary_sheet_temp_id', $oldIds)->delete(); // todo:: need to reconstruct this part with new logic
+                        //DB::table('employee_pf_contribution')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
                     }
                     // insert payroll salary sheet temp
                     foreach (array_chunk($PayrollSalarySheetTemp, 500) as $chunk) {
@@ -552,29 +617,29 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         DB::table('payroll_salary_loan_advance_n_other_installments')->insert($chunk);
                     }
 
-                    // ধাপ 5: child array গুলোতে salary_sheet_temp_id বসাও, mapping key ফেলে দাও
-                    $payrollAccruedAllowanceIncomeFinal = array_map(function ($row) use ($idMap) {
-                        $row['salary_sheet_temp_id'] = $idMap[$row['employee_id_for_mapping']] ?? null;
-                        unset($row['employee_id_for_mapping']);
-                        return $row;
-                    }, $payrollAccruedAllowanceIncome);
+                    // // ধাপ 5: child array গুলোতে salary_sheet_temp_id বসাও, mapping key ফেলে দাও
+                    // $payrollAccruedAllowanceIncomeFinal = array_map(function ($row) use ($idMap) {
+                    //     $row['salary_sheet_temp_id'] = $idMap[$row['employee_id_for_mapping']] ?? null;
+                    //     unset($row['employee_id_for_mapping']);
+                    //     return $row;
+                    // }, $payrollAccruedAllowanceIncome);
 
-                    // ধাপ 6: child table batch insert (chunk করে)
-                    foreach (array_chunk($payrollAccruedAllowanceIncomeFinal, 500) as $chunk) {
-                        DB::table('payroll_accrued_allowance_income')->insert($chunk);
-                    }
+                    // // ধাপ 6: child table batch insert (chunk করে)
+                    // foreach (array_chunk($payrollAccruedAllowanceIncomeFinal, 500) as $chunk) {
+                    //     DB::table('payroll_accrued_allowance_income')->insert($chunk);
+                    // }
 
-                    // ধাপ 5: child array গুলোতে salary_sheet_temp_id বসাও, mapping key ফেলে দাও
-                    $EmployeePfContributionFinal = array_map(function ($row) use ($idMap) {
-                        $row['salary_sheet_temp_id'] = $idMap[$row['employee_id_for_mapping']] ?? null;
-                        unset($row['employee_id_for_mapping']);
-                        return $row;
-                    }, $EmployeePfContribution);
+                    // // ধাপ 5: child array গুলোতে salary_sheet_temp_id বসাও, mapping key ফেলে দাও
+                    // $EmployeePfContributionFinal = array_map(function ($row) use ($idMap) {
+                    //     $row['salary_sheet_temp_id'] = $idMap[$row['employee_id_for_mapping']] ?? null;
+                    //     unset($row['employee_id_for_mapping']);
+                    //     return $row;
+                    // }, $EmployeePfContribution);
 
-                    // ধাপ 6: child table batch insert (chunk করে)
-                    foreach (array_chunk($EmployeePfContributionFinal, 500) as $chunk) {
-                        DB::table('employee_pf_contribution')->insert($chunk);
-                    }
+                    // // ধাপ 6: child table batch insert (chunk করে)
+                    // foreach (array_chunk($EmployeePfContributionFinal, 500) as $chunk) {
+                    //     DB::table('employee_pf_contribution')->insert($chunk);
+                    // }
                 }
             });
         }
