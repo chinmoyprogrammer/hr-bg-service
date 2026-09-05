@@ -44,6 +44,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $PayrollSalarySheetHeadsTemp = [];
         $EmployeePfContribution = [];
         $payrollAccruedAllowanceIncome = [];
+        $PayrollAttendanceSummaryValues = [];
+        $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
+        $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
 
         $userQuery = User::with(
             [
@@ -64,16 +67,18 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ->where('is_fully_paid', 0);
                 },
                 'hasOfficialInformation.attendanceLogs' => function ($query) use ($payload) {
-                    $query->whereNull('deleted_at')
-                        ->whereNull('deleted_by')
-                        ->whereBetween('attendance_date',  [
+                    $query->whereNull('employee_attendance_status_logs.deleted_at')
+                        ->whereNull('employee_attendance_status_logs.deleted_by')
+                        ->whereBetween('employee_attendance_status_logs.attendance_date',  [
                             date('Y-m-01', strtotime($payload['salary_calculate_month_year'])),
                             date('Y-m-t', strtotime($payload['salary_calculate_month_year']))
                         ])
                         ->whereHas('attendance', function ($query) use ($payload) {
                             $query->whereNull('deleted_at')
                                 ->whereNull('deleted_by');
-                        });
+                        })
+                        ->join('employee_attendance','employee_attendance_status_logs.employee_attendance_id','=','employee_attendance.id')
+                        ;
                 },
                 'hasOfficialInformation.hasLateAttendanceRecords' => function ($query) use ($payload) { //// this is basically for "deductable" late attendance records
                     $query->whereNull('deleted_at')
@@ -109,6 +114,22 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     ->where('month', date('m', strtotime($payload['salary_calculate_month_year'])))
                     ;
                 },
+                'hasOfficialInformation.hasUnpaidLeave' => function ($query) use ($payload) {
+                    $query->whereNull('deleted_at')
+                        ->whereNull('deleted_by')
+                        ->whereBetween('leave_date',  [
+                            date('Y-m-01', strtotime($payload['salary_calculate_month_year'])),
+                            date('Y-m-t', strtotime($payload['salary_calculate_month_year']))
+                        ])
+                    ;
+                },
+                'hasOfficialInformation.hasLateAttendanceConsiderationRequests' => function ($query) use ($payload) {
+                    $query->whereNull('deleted_at')
+                    ->whereNull('deleted_by')
+                    ->where('month', date('m', strtotime($payload['salary_calculate_month_year'])))
+                    ->where('year', date('Y', strtotime($payload['salary_calculate_month_year'])))
+                    ;
+                    },
             ]
         )
             ->where('status', 1)
@@ -121,7 +142,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             $userQuery->whereIn('id', $payload['employeeIds']);
         }
         $userQuery->lazy()
-            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp) {
+            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues) {
                 $total_earning = $total_deductable = $net_salary_payable = 0;
                 $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
                 $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
@@ -192,16 +213,78 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                 //... calculate late deductions
                 $total_present_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 1)->count() ?? 0;
-                $deductable_late_days = $user->hasOfficialInformation->hasLateAttendanceRecords?->count() ?? 0; // this is basically for "deductable" late attendance records
+                //$deductable_late_days = $user->hasOfficialInformation->hasLateAttendanceRecords?->count() ?? 0; // this is basically for "deductable" late attendance records
 
+
+                //... calculate payable days
+                $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave->count() ?? 0;
+                $late_deduction_policy = $user->hasOfficialInformation->hasLateDeductionPolicy;
+                $late_attendance_consideration_requests = $user->hasOfficialInformation->hasLateAttendanceConsiderationRequests?->first()->consider_days ?? 0;
+                $absentDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 0)->count() ?? 0; 
+                $weekendDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 17)->count() ?? 0; 
+                $holidayDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 9)->count() ?? 0; 
+                $paidLeaveDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 8)->count() ?? 0; 
+
+                //.... extract deductable late days, weekends, holidays, paid leave, absent days
+                $late_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status',2)->count() ?? 0;
+                $deductable_late_days = (int) ($late_days / $late_deduction_policy->max_late_days);
+
+
+                $payable_days = $total_present_days 
+                                - $unpaidLeaveDeduction 
+                                + $late_attendance_consideration_requests 
+                                - $deductable_late_days 
+                                - $absentDays 
+                                + $weekendDays 
+                                + $holidayDays 
+                                + $paidLeaveDays 
+                                ;
+                $attendance_summary_value_list = [
+                    ['type'=>'0', 'value'=>$absentDays.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'1', 'value'=>$total_present_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'2', 'value'=>$deductable_late_days.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'8', 'value'=>$paidLeaveDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'9', 'value'=>$holidayDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'17', 'value'=>$weekendDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'24', 'value'=>$payable_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'25', 'value'=>$unpaidLeaveDeduction.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    ['type'=>'26', 'value'=>$late_attendance_consideration_requests, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                ];
+
+
+                //... insert data to PayrollAttendanceSummaryValues
+                foreach($attendance_summary_value_list as $item)
+                {
+                    $PayrollAttendanceSummaryValues[] = [
+                        'type'=>$item['type'],
+                        'value'=>$item['value'],
+                        'year'=>$item['year'],
+                        'month'=>$item['month'],
+                        'employee_user_id'=>$item['employee_user_id'],
+                        'created_at'=>$item['created_at'],
+                        'created_by'=>$item['created_by'],
+                    ];
+                }
+
+                
+                $gross_payable = $gross_salary_of_1_day * $payable_days;
+                
+                
+                
                 if ($deductable_late_days > 0) {
-                    $hasLateAttendanceRecordsIds = $user->hasOfficialInformation->hasLateAttendanceRecords?->pluck('id')->toArray();
-                    $hasLateAttendanceRecordsIds = implode('_', $hasLateAttendanceRecordsIds);
-                    $deductable_late_minutes = $user->hasOfficialInformation->hasLateAttendanceRecords?->sum('late_minutes') ?? 0; // this is basically for "deductable" late attendance records
+                    $deductable_late_minutes = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 2)->sum(function ($log) {
+                        if ($log->attendance?->shift_start_time && $log->in_time) {
+                            $shiftStart = \Carbon\Carbon::parse($log->attendance->shift_start_time);
+                            $clockIn = \Carbon\Carbon::parse($log->in_time);
+                            return max(0, $clockIn->diffInMinutes($shiftStart, false));
+                        }
+                        return 0;
+                    });
+                    //$deductable_late_minutes = $user->hasOfficialInformation->hasLateAttendanceRecords?->sum('late_minutes') ?? 0; // this is basically for "deductable" late attendance records
 
                     $late_deductable_amount = 0;
                     $salary = $gross_salary_of_1_day;
-                    $late_deduction_policy = $user->hasOfficialInformation->hasLateDeductionPolicy;
+                    
                     if ($late_deduction_policy && $late_deduction_policy->deduction_from == 'Gross') {
                         $salary = $gross_salary_of_1_day;
                     }
@@ -237,7 +320,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                                 'salary_sheet_temp_id' => null,
                                 'employee_id_for_mapping' => $user->id,
                                 'employee_user_id' => $user->id,
-                                'child_data_identifier_key_incoming' => 'late_attendance_records_' . $hasLateAttendanceRecordsIds,
+                                'child_data_identifier_key_incoming' => '',
                                 'amount' => $late_deductable_amount,
                                 'type' => 'late',
                                 'created_at' => date('Y-m-d H:i:s'),
@@ -363,7 +446,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 //deduction type -> 'loan','pr-done','absent-done','pf-done','meal-done','late-done','ait-done', 'ot'
 
                 //...... calculate absent deductions
-                $absentDays = $user->hasOfficialInformation->attendanceLogs->where('attendance_status', 0)->count();
+                
                 $absentDeduction = $absentDays * $gross_salary_of_1_day; // $basic_salary_of_1_day
                 if($absentDeduction > 0){
                     $total_deductable += $absentDeduction;
@@ -393,15 +476,47 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 }
 
 
+                // calculate unpaid leave deduction 
+                //... salary_head = 19 = unpaid leave
+
+
+                 $existedUnPaidDeductionRows = $user
+                        ->hasOfficialInformation
+                        ->hasPayrollPreSalarySheetDeductions?->
+                        where('employee_user_id', $user->id)->where('type', 'unpaid_leave')
+                        ;
+
+                if($existedUnPaidDeductionRows->count() > 0){
+                   
+                }else{
+                    $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave->count();
+                    if($unpaidLeaveDeduction > 0)
+                    {
+                        $total_deductable += $unpaidLeaveDeduction * $gross_salary_of_1_day; // $basic_salary_of_1_day
+
+                    }
+                }
+
+
+
+
 
                 // employee AIT calculaiton
+                Log::info("AIT user id: $user->id, ait_eligible: $user->hasOfficialInformation->ait_eligible");
+                if ($user->hasOfficialInformation->ait_eligible);
                 if ($user->hasOfficialInformation->ait_eligible == 1) {
+                    Log::info("AIT");
                     $hasAitPause = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
                         ?->where('pause_month', $generateMonth)
                         ->where('pause_year', $generateYear)
-                        ->where('pause_type', 4)       // 4 = ait deduction pause
-                        ->where('approval_status', 1)  // 1 = approved
+                        ->where(function ($q) {
+                            $q->where('pause_type', 4)      // 4 = ait deduction pause
+                              ->orWhere('approval_status', 1); // 1 = approved
+                        })
                         ->exists() ?? 0;
+                        Log::info("AIT hasAitPause: ",[$hasAitPause]);
+
+
 
                     if ($user->hasOfficialInformation->ait_deduction_basis == 'fixed') {
                         $ait_amount = $user->hasOfficialInformation->ait_amount;
@@ -412,10 +527,15 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         //                 ->first()->amount;
 
                         $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $basicSalary; //calculation to be updated
+                    } elseif ($user->hasOfficialInformation->ait_deduction_basis == 'gross') {
+                        $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
                     } else {
                         $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
                     }
-                    if ($ait_amount > 0 && !$hasAitPause) {
+
+                    Log::info("AIT ait_amount: $ait_amount");
+                    if ($ait_amount > 0 && ($hasAitPause == false || $hasAitPause == 0 || $hasAitPause == null || trim($hasAitPause) == '')) {
+                        Log::info("AIT ait_amount: $ait_amount");
                         $total_deductable += $ait_amount;
                         $PayrollPreSalarySheetDeduction[] = [
                             'salary_sheet_temp_id' => null,
@@ -441,7 +561,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 }
 
                 // employee PF calculaiton
+                Log::info('user->hasOfficialInformation->employeePfPolicy', [$user->hasOfficialInformation->employeePfPolicy,$user->hasOfficialInformation->pf_eligibility_status]);
                 if ($user->hasOfficialInformation->pf_eligibility_status == 1 && $user->hasOfficialInformation->employeePfPolicy != null) {
+                    Log::info("Yesss");
                     $employeePfPolicyMaxDeduction = $user->hasOfficialInformation->employeePfPolicy?->max_deduction_amount ?? 1500; // 1500
                     // $employeePfPercentage = SalaryHead::where('id', 12)->first()->percentage;
                     // $employeePfAmount = $user->hasOfficialInformation->gross_salary * ($employeePfPercentage / 100);
@@ -451,6 +573,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     } else {
                         $pf_amount = $employeePfAmount;
                     }
+
+                    Log::info("pf_amount",[$pf_amount]);
 
                     $hasPfPause = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
                         ?->where('pause_month', $generateMonth)
@@ -533,6 +657,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     'employee_user_id' => $user->id,
                     'total_earning' => $total_earning,
                     'total_deductable' => $total_deductable,
+                    'gross_payable' => $gross_payable,
                     'net_salary_payable' => $total_earning - $total_deductable,
                     'month' => $generateMonth,
                     'year' => $generateYear,
@@ -545,6 +670,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         if ($PayrollSalarySheetTemp && count($PayrollSalarySheetTemp) > 0) {
             DB::transaction(function () use (
                 $PayrollSalarySheetTemp,
+                $PayrollAttendanceSummaryValues,
                 $PayrollSalarySheetHeadsTemp,
                 $PayrollPreSalarySheetDeduction,
                 $PayrollSalaryAdvanceLoanNOtherInstallment,
@@ -562,6 +688,12 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ->where('month', $month)
                         ->where('year', $year)
                         ->pluck('id');
+
+                    // আগের এই মাস-বছরের attendance summary values মুছে ফেলো
+                    DB::table('payroll_attendance_summary_values')
+                        ->where('month', $month)
+                        ->where('year', $year)
+                        ->delete();
 
                     if ($oldIds->isNotEmpty()) {
                         DB::table('payroll_salary_sheet_heads_temp')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
@@ -640,8 +772,20 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     // foreach (array_chunk($EmployeePfContributionFinal, 500) as $chunk) {
                     //     DB::table('employee_pf_contribution')->insert($chunk);
                     // }
+
+                    // ধাপ 7: attendance summary values batch insert (chunk করে) — পুরনো data ধাপ ০ তে মুছে ফেলা হয়েছে
+                    Log::info("Attendance summary values: ".json_encode($PayrollAttendanceSummaryValues));
+                    if (count($PayrollAttendanceSummaryValues) > 0) {
+                        foreach (array_chunk($PayrollAttendanceSummaryValues, 500) as $chunk) {
+                            DB::table('payroll_attendance_summary_values')->insert($chunk);
+                        }
+                    }
                 }
             });
+
+            createNotification("Salary sheet generated successfully for month $generateMonth/$generateYear",$payload['created_by'],);
+
+
         }
     }
 }
