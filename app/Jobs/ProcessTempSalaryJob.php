@@ -2,23 +2,25 @@
 
 namespace App\Jobs;
 
-use App\Models\User;
-use App\Models\SalaryHead;
-use Illuminate\Bus\Queueable;
-use App\Models\PayrollSalaryHead;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use App\Models\LateAttendanceRecord;
-use Illuminate\Queue\SerializesModels;
-use Illuminate\Queue\InteractsWithQueue;
-use App\Models\PayrollSalaryAdvanceNLoan;
+use App\Models\BusinessSetting;
 use App\Models\EmployeeOfficialInformation;
 use App\Models\EmployeeOtData;
+use App\Models\LateAttendanceRecord;
 use App\Models\MealLoanAitPfEtcPause;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use App\Models\PayrollPreSalarySheetDeduction;
-use App\Models\PrProblemRegisterAccousedPerson;
 use App\Models\PayrollSalaryAdvanceLoanNOtherInstallment;
+use App\Models\PayrollSalaryAdvanceNLoan;
+use App\Models\PayrollSalaryHead;
+use App\Models\PrProblemRegisterAccousedPerson;
+use App\Models\SalaryHead;
+use App\Models\User;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 
 class ProcessTempSalaryJob extends Job implements ShouldQueue
@@ -47,6 +49,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $PayrollAttendanceSummaryValues = [];
         $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
         $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
+        $meal_rate = BusinessSetting::where('setting_key', 'PER_MEAL_COST')->first()->value;
 
         $userQuery = User::with(
             [
@@ -142,7 +145,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             $userQuery->whereIn('id', $payload['employeeIds']);
         }
         $userQuery->lazy()
-            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues) {
+            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate) {
                 $total_earning = $total_deductable = $net_salary_payable = 0;
                 $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
                 $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
@@ -202,6 +205,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => 18, //loan
                             'value' => $total_loan_amount,
                             'is_earning' => 0,
@@ -336,6 +340,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => 15, //late
                             'value' => $late_deductable_amount,
                             'is_earning' => 0,
@@ -356,7 +361,10 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ->where('approval_status', 1)  // 1 = approved
                         ->count() ?? 0;
 
-                    $total_meal_cost_this_month = ($total_present_days - $mealPauseCount) * $user->hasOfficialInformation->per_meal_cost;
+                    $meal_rate = $user->hasOfficialInformation->per_meal_cost == 0 || $user->hasOfficialInformation->per_meal_cost == null ? $meal_rate : $user->hasOfficialInformation->per_meal_cost;
+
+                    $total_meal_cost_this_month = ($total_present_days - $mealPauseCount) * $meal_rate;
+                    Log::info('total_meal_cost_this_month', ['present_days'=>$total_present_days,'meal_cost'=>$total_meal_cost_this_month]);
 
                     if ($total_meal_cost_this_month > 0) {
                         $total_deductable += $total_meal_cost_this_month;
@@ -373,6 +381,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => 13, //meal
                             'value' => $total_meal_cost_this_month,
                             'is_earning' => 0,
@@ -433,6 +442,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => 14, //pr
                             'value' => $total_pr_installment_amount,
                             'is_earning' => 0,
@@ -465,6 +475,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     $PayrollSalarySheetHeadsTemp[] = [
                         'salary_sheet_temp_id' => null,
                         'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
                         'head_id' => 16, //absent
                         'value' => $absentDeduction,
                         'is_earning' => 0,
@@ -551,6 +562,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => 11, //ait
                             'value' => $ait_amount,
                             'is_earning' => 0,
@@ -622,6 +634,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => 12, //pf
                             'value' => $pf_amount,
                             'is_earning' => 0,
@@ -643,6 +656,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
+                            'employee_user_id' => $user->id,
                             'head_id' => $head->salary_head_id,
                             'value' => $head->amount,
                             'is_earning' => $head->is_earning,
