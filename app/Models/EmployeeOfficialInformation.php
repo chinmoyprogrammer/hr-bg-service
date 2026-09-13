@@ -93,6 +93,7 @@ class EmployeeOfficialInformation extends Model
         return $this->hasMany(LeavePolicyDetail::class, 'leave_policy_id', 'leave_policy_id');
     }
 
+    //.... late deduction policy
     public function hasLateDeductionPolicy()
     {
         return $this->hasOne(LateDeductionPolicy::class, 'id', 'late_deduction_policy_id');
@@ -196,6 +197,29 @@ class EmployeeOfficialInformation extends Model
         ->where('holiday_type_id', '<>', 8)
         ;
     }
+
+    // has payroll_pre_salary_sheet_deductions
+    public function hasPayrollPreSalarySheetDeductions()
+    {
+        return $this->hasMany(PayrollPreSalarySheetDeduction::class, 'employee_user_id', 'employee_user_id');
+    }
+
+    //... has unpaid leave
+    public function hasUnpaidLeave()
+    {
+        return $this->hasMany(LeaveApplicationDetail::class, 'employee_user_id', 'employee_user_id')
+        ->where('leave_head_id', 6)
+        ;
+    }
+
+    // has late_attendance_consideration_requests
+    public function hasLateAttendanceConsiderationRequests()
+    {
+        return $this->hasMany(LateAttendanceConsiderationRequest::class, 'employee_user_id', 'employee_user_id');
+    }
+
+    
+
 
 }
 
