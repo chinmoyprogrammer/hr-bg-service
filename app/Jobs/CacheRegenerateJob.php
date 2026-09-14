@@ -551,6 +551,8 @@ class CacheRegenerateJob extends Job implements ShouldQueue
         employee_designations.title as designation_name,
         employee_official_information.designation_level_id,
         employee_designation_levels.level_name,
+        employee_official_information.employee_type_id,
+        employee_types.employee_type as employee_type_name,
         shifts.id as shift_id,
         shifts.title as shift_name,
         shifts.clock_in,
@@ -611,6 +613,11 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                  ;
         })
         ->leftJoin('employee_designation_levels','employee_designation_levels.id','employee_designations.designation_level_id')
+        ->leftJoin('employee_types', function ($join) {
+            $join->on('employee_types.id', '=', 'employee_official_information.employee_type_id')
+                  ->whereNull('employee_types.deleted_at')
+                 ;
+        })
         ->leftJoin('shifts','shifts.id','employee_official_information.shift_id')
         ->get();
 
