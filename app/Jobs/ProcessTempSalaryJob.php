@@ -49,7 +49,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $PayrollAttendanceSummaryValues = [];
         $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
         $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
-        $meal_rate = BusinessSetting::where('setting_key', 'PER_MEAL_COST')->first()->value;
+        $meal_rate = BusinessSetting::where('settings_key', 'PER_MEAL_COST')->first()->value;
 
         $userQuery = User::with(
             [
@@ -697,16 +697,25 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                 if (count($PayrollSalarySheetTemp) > 0) {
 
-                    // ধাপ ০: আগের এই মাস-বছরের data থাকলে মুছে ফেলো (child আগে, parent পরে)
+                    // branch-wise regenerate: payload employeeIds = employees of the selected branch(es).
+                    // only their old rows for this month get deleted, other branches stay untouched.
+                    // no employeeIds in payload = whole month regenerate.
+                    $scopeEmployeeIds = (isset($payload['employeeIds']) && count($payload['employeeIds']) > 0)
+                        ? array_values(array_unique(array_map('intval', $payload['employeeIds'])))
+                        : null;
+
+                    // ধাপ ০: এই মাস-বছরের scope এর মধ্যে থাকা আগের data মুছে ফেলো (child আগে, parent পরে)
                     $oldIds = DB::table('payroll_salary_sheet_temp')
                         ->where('month', $month)
                         ->where('year', $year)
+                        ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
                         ->pluck('id');
 
-                    // আগের এই মাস-বছরের attendance summary values মুছে ফেলো
+                    // scope এর মধ্যে থাকা আগের এই মাস-বছরের attendance summary values মুছে ফেলো
                     DB::table('payroll_attendance_summary_values')
                         ->where('month', $month)
                         ->where('year', $year)
+                        ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
                         ->delete();
 
                     if ($oldIds->isNotEmpty()) {
@@ -722,10 +731,12 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         DB::table('payroll_salary_sheet_temp')->insert($chunk);
                     }
 
-                    // ধাপ ২: mapping বানাও — employee_user_id => id
+                    // ধাপ ২: mapping বানাও — employee_user_id => id (শুধু এই run এ insert হওয়া row গুলো)
+                    $generatedEmployeeIds = array_values(array_unique(array_column($PayrollSalarySheetTemp, 'employee_user_id')));
                     $idMap = DB::table('payroll_salary_sheet_temp')
                         ->where('month', $month)
                         ->where('year', $year)
+                        ->whereIn('employee_user_id', $generatedEmployeeIds)
                         ->pluck('id', 'employee_user_id');
 
                     // ধাপ ৩: child array গুলোতে salary_sheet_temp_id বসাও, mapping key ফেলে দাও
