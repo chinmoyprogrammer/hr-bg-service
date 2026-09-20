@@ -49,7 +49,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $PayrollAttendanceSummaryValues = [];
         $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
         $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
-        $meal_rate = BusinessSetting::where('setting_key', 'PER_MEAL_COST')->first()->value;
+        $meal_rate = BusinessSetting::where('settings_key', 'PER_MEAL_COST')->first()->value;
 
         $userQuery = User::with(
             [
