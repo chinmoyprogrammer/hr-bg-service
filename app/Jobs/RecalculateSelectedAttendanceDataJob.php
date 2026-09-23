@@ -54,7 +54,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
 
 
         //..... Pull attendance device data
-        if($this->payload['pullDeviceData'] == 1)
+        if (($this->payload['pullDeviceData'] ?? 0) == 1)
         {
             $attendanceDeviceDataPullService = new AttendanceDeviceDataPullService();
             $attendanceDeviceDataPullService->process($this->dates);
