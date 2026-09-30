@@ -308,6 +308,11 @@ class PreviousDayOutPunchUpdateService
             ]);
             PayrollAccruedAllowanceIncome::insert([
                 'employee_user_id'       => $row->employee_user_id,
+                // unit of the attendance day the allowance is for
+                'branch_id'              => $prevAttendance->branch_id ?: $row->branch_id,
+                'department_id'          => $prevAttendance->department_id,
+                'section_id'             => $prevAttendance->section_id,
+                'sub_section_id'         => $prevAttendance->sub_section_id,
                 'employee_attendance_id' => $prevAttendance->id,
                 'amount'                 => $amount,
                 'type'                   => 6, // Night Duty Allowance

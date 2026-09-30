@@ -669,6 +669,11 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 // employee total salary calculation
                 $PayrollSalarySheetTemp[] = [
                     'employee_user_id' => $user->id,
+                    // unit snapshot at generation time; salarySheetGenerate copies it to the final sheet
+                    'branch_id' => $user->hasOfficialInformation->branch_id,
+                    'department_id' => $user->hasOfficialInformation->department_id,
+                    'section_id' => $user->hasOfficialInformation->section_id,
+                    'sub_section_id' => $user->hasOfficialInformation->sub_section_id,
                     'total_earning' => $total_earning,
                     'total_deductable' => $total_deductable,
                     'gross_payable' => $gross_payable,
