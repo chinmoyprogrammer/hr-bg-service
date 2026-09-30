@@ -263,6 +263,13 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             ->where(function ($q) use ($endDate) {
                 $q->whereRaw('joining_date IS NOT NULL AND  joining_date <= ?', [$endDate]);
             })
+            // Inactive users (users.status = 0) must not get attendance entries.
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users')
+                    ->whereColumn('users.id', 'employee_official_information.employee_user_id')
+                    ->where('users.status', 1);
+            })
             //->where('employee_user_id',516)
             ->get();
             // dd($officialInfos);
