@@ -568,6 +568,10 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         if (!$isOvernightShift) {
             $result['payrollAccruedItems'][] = [
                 'employee_user_id'       => $row->employee_user_id,
+                'branch_id'              => $row->branch_id,
+                'department_id'          => $row->department_id,
+                'section_id'             => $row->section_id,
+                'sub_section_id'         => $row->sub_section_id,
                 'employee_attendance_id' => null,
                 'amount'                 => ($row->gross_salary / date('t')) * 1,
                 'type'                   => 6, // Night Duty Allowance
@@ -859,6 +863,10 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         if ($publicHoliday && $publicHoliday->holiday_type_id == 10) {
             $result['payrollAccruedItems'][] = [
                 'employee_user_id'       => $row->employee_user_id,
+                'branch_id'              => $row->branch_id,
+                'department_id'          => $row->department_id,
+                'section_id'             => $row->section_id,
+                'sub_section_id'         => $row->sub_section_id,
                 'employee_attendance_id' => null,
                 'amount'                 => ($row->gross_salary / date('t')) * ($row->employeeOtPolicy->multiplier ?? 1) * 2,
                 'type'                   => 8, // Festival Duty Allowance
@@ -1045,8 +1053,10 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         return [
             'emp_code'                                   => $row->emp_code,
             'employee_user_id'                           => $row->employee_user_id,
+            'branch_id'                                  => $row->branch_id,
             'department_id'                              => $row->department_id,
             'section_id'                                 => $row->section_id,
+            'sub_section_id'                             => $row->sub_section_id,
             'shift_id'                                   => $shift->id ?? null,
             'leave_id'                                   => $this->leave_application_id ?? null,
             'shift_start_time'                           => $shift->clock_in      ?? '09:00:00',
