@@ -55,7 +55,7 @@ class AttendanceProcessingService
         ?object    $otRequisition,
         ?Collection $leaveApplicationDetails, // keyed collection of LeaveApplicationDetail for employee
         ?array      $manualPunch = null,
-        ?int        $carryOverNightStatus = null, // 12|13 when this date's only punch was consumed by PreviousDayOutPunchUpdateService to close out the previous day
+        ?int        $carryOverNightStatus = null, // unused: carry-over dates are now processed as no-punch days
         ?int        $createdUserId = null
     ): array {
 
@@ -168,29 +168,9 @@ class AttendanceProcessingService
 
         // ── No punches at all: absent / leave / holiday ───────────────────────────
         if (!$first) {
-            // This date's only punch (if any) was already consumed by
-            // PreviousDayOutPunchUpdateService to close out the PREVIOUS day's
-            // overnight/night-duty checkout. The day itself is not "absent" — it's
-            // still open, pending its own check-in — so tag Incomplete In (10) +
-            // the carry-over night-duty status (12/13) instead of marking Absent.
-            if ($carryOverNightStatus !== null) {
-                Log::info('AttendanceProcessingService applying carry-over status instead of absent', [
-                    'employee_user_id' => $row->employee_user_id ?? null,
-                    'emp_code' => $row->emp_code ?? null,
-                    'date' => $date,
-                    'carry_over_status' => $carryOverNightStatus,
-                ]);
-                $statusesForLog = [10, $carryOverNightStatus];
-                $result['statusLogs'] = $this->buildStatusLogRows(
-                    $row->employee_user_id, $date, $now, $statusesForLog
-                );
-                $result['attendance'] = $this->buildAttendanceRow(
-                    $row, $date, $shift, null, null, null, false, $publicHoliday, $empHoliday, 0, $now
-                );
-                $result['rowKey'] = $this->makeRowKey($row->emp_code, $row->employee_user_id, $date, null, null, $now);
-                return $result;
-            }
-
+            // A date whose only punch was consumed by PreviousDayOutPunchUpdateService as
+            // the previous day's night checkout is treated like any no-punch day (Absent /
+            // leave / holiday). The 12/13 already sits on the previous day's row.
             Log::info('AttendanceProcessingService treating as absent: no first punch after cutoff', [
                 'employee_user_id' => $row->employee_user_id ?? null,
                 'emp_code' => $row->emp_code ?? null,
@@ -943,7 +923,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
         if (
             $first && $last && $shift &&
-            (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time) && strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->first_half_day . ' +90 minutes')) &&
+            (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->end_check_in_time) && strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->clock_out_start_time)) &&
             (strtotime($last->punch_datetime) >= strtotime($date . ' ' . $shift->clock_out))
         ) {
             if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 4)->contains('leave_date', $date)) {
