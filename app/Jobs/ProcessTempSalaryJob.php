@@ -67,6 +67,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 'loans' => function ($query) {
                     $query->whereNull('deleted_at')
                         ->whereNull('deleted_by')
+                        ->where('approval_status',1)
                         ->where('is_fully_paid', 0);
                 },
                 'hasOfficialInformation.attendanceLogs' => function ($query) use ($payload) {
@@ -722,6 +723,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ->where('year', $year)
                         ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
                         ->delete();
+                        
 
                     if ($oldIds->isNotEmpty()) {
                         DB::table('payroll_salary_sheet_heads_temp')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
