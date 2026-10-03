@@ -522,8 +522,10 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         $attendanceId = EmployeeAttendance::insertGetId([
             'emp_code'                                  => $employee->emp_code ?? null,
             'employee_user_id'                          => $employeeUserId,
+            'branch_id'                                  => $employee->branch_id,
             'department_id'                              => $employee->department_id,
             'section_id'                                 => $employee->section_id,
+            'sub_section_id'                             => $employee->sub_section_id,
             'shift_id'                                   => $shiftId,
             'leave_id'                                   => null,
             'shift_start_time'                           => $shift->clock_in ?? '09:00:00',
