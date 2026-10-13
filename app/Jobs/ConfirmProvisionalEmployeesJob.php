@@ -64,6 +64,7 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
 
             }
         }
+        regenerateEmployeeCache();
     }
 
     private function calculateAllowedLeaveDays($leavePolicyDetailDays, $joiningDate)

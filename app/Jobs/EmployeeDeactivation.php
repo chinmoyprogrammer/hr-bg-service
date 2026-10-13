@@ -127,6 +127,8 @@ class EmployeeDeactivation extends Job implements ShouldQueue
                 }
             }
 
+            regenerateEmployeeCache();
+
         } catch (\Exception $e) {
             Log::error('EmployeeDeactivation: Exception occurred.', ['error' => $e->getMessage()]);
         }

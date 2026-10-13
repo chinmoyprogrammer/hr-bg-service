@@ -296,6 +296,9 @@ class CacheRegenerateJob extends Job implements ShouldQueue
                  'employeeSkills.skill'=>function($query){
                     $query->whereNull('deleted_by')->whereNull('deleted_at');
                 },
+                 'employeeEducations'=>function($query){
+                    $query->whereNull('deleted_by')->whereNull('deleted_at');
+                },
                  'employeeEducations.educationLevel'=>function($query){
                     $query->whereNull('deleted_by')->whereNull('deleted_at')->orderBy('edu_order','asc');
                 },
