@@ -29,6 +29,16 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
     protected array $payload;
 
+    // salary head per loan type
+    private const LOAN_HEADS = [
+        'loan'    => 18, // Loan Installment(Long)
+        'advance' => 20, // Loan Installment(Advance)
+        'pf_loan' => 21, // Loan Installment(PF)
+    ];
+
+    // order loans are recovered in when net salary can't cover them all
+    private const LOAN_PRIORITY = ['advance' => 1, 'loan' => 2, 'pf_loan' => 3];
+
     public function __construct(array $payload)
     {
         $this->payload = $payload;
@@ -51,6 +61,22 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
         $meal_rate = BusinessSetting::where('settings_key', 'PER_MEAL_COST')->first()->value;
 
+        // loan / pf_loan / advance installments due this month, grouped by employee.
+        // Read from the repayment schedule (hr-admin LoanService owns it), so carried
+        // amounts, reschedules, waivers and a smaller last installment are honoured.
+        $dueLoanRowsByUser = $this->dueLoanRows((int) $generateMonth, (int) $generateYear, $payload['employeeIds'] ?? []);
+
+        // PR damages paused for this month -- only pauses linked to one PR count
+        $pausedPrKeys = DB::table('meal_loan_ait_pf_etc_pauses')
+            ->where('pause_type', 3) // 3 = pr installment deduction pause
+            ->where('pause_month', (int) $generateMonth)
+            ->where('pause_year', (int) $generateYear)
+            ->where('approval_status', 1)
+            ->whereNull('deleted_at')
+            ->where('child_data_identifier_key_incoming', 'like', 'pr\_problem\_register\_accoused\_persons\_%')
+            ->pluck('child_data_identifier_key_incoming')
+            ->all();
+
         $userQuery = User::with(
             [
                 'hasOfficialInformation' => function ($query) {
@@ -63,11 +89,6 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     $query->whereNull('deleted_at')
                         ->whereNull('deleted_by')
                         ->orderBy('effective_date', 'desc');
-                },
-                'loans' => function ($query) {
-                    $query->whereNull('deleted_at')
-                        ->whereNull('deleted_by')
-                        ->where('is_fully_paid', 0);
                 },
                 'hasOfficialInformation.attendanceLogs' => function ($query) use ($payload) {
                     $query->whereNull('employee_attendance_status_logs.deleted_at')
@@ -97,8 +118,12 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     $query->whereNull('deleted_at')->whereNull('deleted_by');
                 },
                 'hasOfficialInformation.hasPrProblemRegisterAccousedPerson' => function ($query) {
+                    // only PR damages that still have something to collect
                     $query->whereNull('deleted_at')
                         ->whereNull('deleted_by')
+                        ->where('is_fully_paid', 0)
+                        ->where('balance', '>', 0)
+                        ->where('installment_amount', '>', 0)
                         ->whereHas('problemRegister', function ($query) {
                             $query->whereNull('deleted_at')
                                 ->whereNull('deleted_by');
@@ -145,7 +170,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             $userQuery->whereIn('id', $payload['employeeIds']);
         }
         $userQuery->lazy()
-            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate) {
+            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate, $dueLoanRowsByUser, $pausedPrKeys) {
                 $total_earning = $total_deductable = $net_salary_payable = 0;
                 $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
                 $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
@@ -155,65 +180,6 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $gross_salary_of_1_day = $user->hasOfficialInformation->gross_salary / date('t', strtotime($payload['salary_calculate_month_year']));
                 $basic_salary_of_1_day =  $basicSalary / date('t', strtotime($payload['salary_calculate_month_year']));
 
-
-                //.... todo:: need to reconstruct this part with new logic, kaaj cholche
-                if ($user->loans?->count() > 0) {
-                    $total_loan_amount = 0;
-                    foreach ($user->loans as $loan) {
-                        //.... process loan installments ( user can make a request for pausing the installment deduction for the month, need a history/ settings table )
-                        if ($loan != null && gettype($loan) == 'object') {
-                            //Log::info('\n hasMealLoanAitPfEtcPauses: ', ['hasMealLoanAitPfEtcPauses' => $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()->get()]);
-                            $hasLoanPause = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
-                                ?->where('pause_month', $generateMonth)
-                                ->where('pause_year', $generateYear)
-                                ->where('pause_type', 2)       // 2 = loan installment deduction pause
-                                ->where('approval_status', 1)  // 1 = approved
-                                ->exists();
-                            //Log::info('\n hasLoanPause: ', ['hasLoanPause' => $hasLoanPause]);
-                            $deduct_loan_this_month = 1;
-                            if ($deduct_loan_this_month && !$hasLoanPause) {
-                                $PayrollPreSalarySheetDeduction[] = [
-                                    'salary_sheet_temp_id' => null,
-                                    'employee_id_for_mapping' => $user->id,
-                                    'employee_user_id' => $user->id,
-                                    'child_data_identifier_key_incoming' => 'payroll_salary_advance_n_loans_' . $loan->id,
-                                    'amount' => $loan->primary_installment_amount,
-                                    'type' => 'loan',
-                                    'created_at' => date('Y-m-d H:i:s'),
-                                    'created_user_id' => getUserId(),
-                                ];
-                                // insert data to PayrollSalaryAdvanceLoanNOtherInstallments
-                                $PayrollSalaryAdvanceLoanNOtherInstallment[] = [
-                                    'salary_sheet_temp_id' => null,
-                                    'employee_id_for_mapping' => $user->id,
-                                    'payroll_salary_advance_n_loan_id' => $loan->id,
-                                    'coa_id' => 0,
-                                    'amount' => $loan->primary_installment_amount,
-                                    'remaining_amount' => $loan->outstanding_balance,
-                                    'adjustment_status' => 'with_salary',
-                                    'is_bad_debt' => 0,
-                                    'created_at' => date('Y-m-d H:i:s'),
-                                    'created_user_id' => getUserId(),
-                                    'child_data_identifier_key_incoming' => null,
-                                ];
-                                $total_loan_amount += $loan->primary_installment_amount;
-                            }
-                        }
-                    }
-                    if ($total_loan_amount > 0) {
-                        $total_deductable += $total_loan_amount;
-                        $PayrollSalarySheetHeadsTemp[] = [
-                            'salary_sheet_temp_id' => null,
-                            'employee_id_for_mapping' => $user->id,
-                            'employee_user_id' => $user->id,
-                            'head_id' => 18, //loan
-                            'value' => $total_loan_amount,
-                            'is_earning' => 0,
-                            'created_user_id' => getUserId(), // todo:: need a system user id
-                            'created_at' => date('Y-m-d H:i:s'),
-                        ];
-                    }
-                }
 
                 //... calculate late deductions
                 $total_present_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 1)->count() ?? 0;
@@ -391,66 +357,6 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     }
                 }
 
-                //.... process PR (Jorimana) installments
-                //.... get PR data of this employee
-                // loop through each PR
-
-                $pr = $user->hasOfficialInformation->hasPrProblemRegisterAccousedPerson;
-
-                $total_pr_installment_amount = 0;
-                if ($pr != null && $pr->count() > 0) {
-                    // loop through each PR
-                    foreach ($pr as $item) {
-                        $hasPrPause = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
-                            ?->where('pause_month', $generateMonth)
-                            ->where('pause_year', $generateYear)
-                            ->where('pause_type', 3)       // 3 = pr installment deduction pause
-                            ->where('approval_status', 1)  // 1 = approved
-                            ->exists();
-
-                        if ($hasPrPause) {
-                            continue;
-                        }
-                        $total_deductable += $item->installment_amount;
-                        $PayrollPreSalarySheetDeduction[] = [
-                            'salary_sheet_temp_id' => null,
-                            'employee_id_for_mapping' => $user->id,
-                            'employee_user_id' => $user->id,
-                            'child_data_identifier_key_incoming' => 'pr_problem_register_accoused_persons_' . $item->id,
-                            'amount' => $item->installment_amount,
-                            'type' => 'pr',
-                            'created_at' => date('Y-m-d H:i:s'),
-                            'created_user_id' => getUserId(),
-                        ];
-
-                        $PayrollSalaryAdvanceLoanNOtherInstallment[] = [
-                            'salary_sheet_temp_id' => null,
-                            'employee_id_for_mapping' => $user->id,
-                            'payroll_salary_advance_n_loan_id' => null,
-                            'coa_id' => 0,
-                            'amount' => $item->installment_amount,
-                            'remaining_amount' => $item->balance - $item->installment_amount,
-                            'adjustment_status' => 'with_salary',
-                            'is_bad_debt' => 0,
-                            'created_at' => date('Y-m-d H:i:s'),
-                            'created_user_id' => getUserId(), // todo:: need a system user id
-                            'child_data_identifier_key_incoming' => $item->child_data_identifier_key_outgoing,
-                        ];
-                        $total_pr_installment_amount += $item->installment_amount;
-                    }
-                    if ($total_pr_installment_amount > 0) {
-                        $PayrollSalarySheetHeadsTemp[] = [
-                            'salary_sheet_temp_id' => null,
-                            'employee_id_for_mapping' => $user->id,
-                            'employee_user_id' => $user->id,
-                            'head_id' => 14, //pr
-                            'value' => $total_pr_installment_amount,
-                            'is_earning' => 0,
-                            'created_user_id' => getUserId(), // todo:: need a system user id
-                            'created_at' => date('Y-m-d H:i:s'),
-                        ];
-                    }
-                }
                 //...... calculate late deductions
                 //.... send notification to every employee that his/her salary is processed
                 //deduction type -> 'loan','pr-done','absent-done','pf-done','meal-done','late-done','ait-done', 'ot'
@@ -666,6 +572,103 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         $total_earning += $head->amount;
                     }
                 }
+
+                //.... loan / pf_loan / advance installments -- taken LAST, capped at what
+                // is left of net salary after every other deduction. Only the pending
+                // deduction is written here (is_auto_clean = 1, regenerated on every temp
+                // run); the loan balance, schedule row and ledger are settled when the
+                // final salary sheet is generated. Any unrecovered part carries forward
+                // there.
+                $netLeft = max(0, round($total_earning - $total_deductable, 2));
+                $loanHeadTotals = [];
+                foreach ($dueLoanRowsByUser[$user->id] ?? [] as $due) {
+                    $deduct = round(min((float) $due->remaining, $netLeft), 2);
+                    if ($deduct <= 0) {
+                        continue;
+                    }
+                    $netLeft = round($netLeft - $deduct, 2);
+                    $total_deductable += $deduct;
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'child_data_identifier_key_incoming' => $due->loan_key,
+                        'amount' => $deduct,
+                        'type' => 'loan',
+                        'year' => $generateYear,
+                        'month' => $generateMonth,
+                        'is_auto_clean' => 1,
+                        'created_at' => date('Y-m-d H:i:s'),
+                        'created_user_id' => getUserId(),
+                    ];
+
+                    $headId = self::LOAN_HEADS[$due->type];
+                    $loanHeadTotals[$headId] = round(($loanHeadTotals[$headId] ?? 0) + $deduct, 2);
+                }
+                foreach ($loanHeadTotals as $headId => $value) {
+                    $PayrollSalarySheetHeadsTemp[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'head_id' => $headId,
+                        'value' => $value,
+                        'is_earning' => 0,
+                        'created_user_id' => getUserId(), // todo:: need a system user id
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
+
+                //.... PR (problem register / damage) installments -- after the
+                // loans, from what is still left of net salary. Each PR deducts
+                // min(installment, balance); an unrecovered part simply stays in
+                // the balance (the PR runs a month longer). Only a pause linked
+                // to that PR skips it. The balance is reduced at final salary.
+                $prTotal = 0;
+                foreach ($user->hasOfficialInformation->hasPrProblemRegisterAccousedPerson ?? [] as $item) {
+                    $prKey = 'pr_problem_register_accoused_persons_' . $item->id;
+                    if (in_array($prKey, $pausedPrKeys, true)) {
+                        continue;
+                    }
+                    $deduct = round(min((float) $item->installment_amount, (float) $item->balance, $netLeft), 2);
+                    if ($deduct <= 0) {
+                        continue;
+                    }
+                    $netLeft = round($netLeft - $deduct, 2);
+                    $total_deductable += $deduct;
+                    $prTotal = round($prTotal + $deduct, 2);
+
+                    $PayrollPreSalarySheetDeduction[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'child_data_identifier_key_incoming' => $prKey,
+                        'amount' => $deduct,
+                        'type' => 'pr',
+                        'year' => $generateYear,
+                        'month' => $generateMonth,
+                        'is_auto_clean' => 1,
+                        'created_at' => date('Y-m-d H:i:s'),
+                        'created_user_id' => getUserId(),
+                    ];
+                }
+                if ($prTotal > 0) {
+                    $PayrollSalarySheetHeadsTemp[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'head_id' => 14, //pr
+                        'value' => $prTotal,
+                        'is_earning' => 0,
+                        'created_user_id' => getUserId(), // todo:: need a system user id
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
+
+                // get cash , bank , mfs amount
+                $cashBankMfs = $this->getCashBankMfsAmount($user->hasOfficialInformation, $netLeft);
+
+
                 // employee total salary calculation
                 $PayrollSalarySheetTemp[] = [
                     'employee_user_id' => $user->id,
@@ -680,6 +683,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     'net_salary_payable' => $total_earning - $total_deductable,
                     'month' => $generateMonth,
                     'year' => $generateYear,
+                    'cash_payable' => $cashBankMfs['cash'],
+                    'bank_payable' => $cashBankMfs['bank'],
+                    'mfs_payable' => $cashBankMfs['mfs'],
                     'from_date' => date("Y-m-01", strtotime($payload['salary_calculate_month_year'])),
                     'to_date' => date("Y-m-t", strtotime($payload['salary_calculate_month_year'])),
                     'created_user_id' => getUserId(), // todo:: need a system user id
@@ -722,6 +728,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ->where('year', $year)
                         ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
                         ->delete();
+                        
 
                     if ($oldIds->isNotEmpty()) {
                         DB::table('payroll_salary_sheet_heads_temp')->whereIn('salary_sheet_temp_id', $oldIds)->delete();
@@ -759,6 +766,11 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     $PayrollPreSalarySheetDeductionFinal = array_map(function ($row) use ($idMap) {
                         $row['salary_sheet_temp_id'] = $idMap[$row['employee_id_for_mapping']] ?? null;
                         unset($row['employee_id_for_mapping']);
+                        // a batch insert takes its column list from the first row, so
+                        // every row needs the same keys in the same order (only loan
+                        // rows carry year/month)
+                        $row += ['year' => null, 'month' => null, 'is_auto_clean' => 1];
+                        ksort($row);
                         return $row;
                     }, $PayrollPreSalarySheetDeduction);
 
@@ -817,5 +829,92 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
         }
+    }
+
+
+    // get cash , bank , mfs amount
+    private function getCashBankMfsAmount($data, $salaryPayable)
+    {
+        $cashLimit = max(0, (float) ($data->cash_pay_amount ?? 0));
+        $bankLimit = max(0, (float) ($data->bank_pay_amount ?? 0));
+        $remaining = max(0, round((float) $salaryPayable, 2));
+
+        // first pay cash , if some amount rest after cash pay max of bank, after bank fills rest will go to mfs
+        $cash = min($cashLimit, $remaining);
+        $remaining = round($remaining - $cash, 2);
+
+        $bank = min($bankLimit, $remaining);
+        $remaining = round($remaining - $bank, 2);
+
+        $mfs = $remaining;
+
+        return [
+            'cash' => round($cash, 2),
+            'bank' => round($bank, 2),
+            'mfs' => round($mfs, 2),
+        ];
+    }
+
+    /**
+     * The open schedule row due in $month/$year for every running loan, keyed by
+     * employee_user_id and ordered by recovery priority. A loan on hold has no
+     * row to find (activateHold removes them); a loan paused for the month
+     * through the loan module is skipped. Generic Service-Pause rows
+     * (pause_type 2 without a loan link) are deliberately ignored -- they carry
+     * nothing forward.
+     *
+     * @return array<int, object[]> each: loan_id, loan_key, type, schedule_id, remaining
+     */
+    private function dueLoanRows(int $month, int $year, array $employeeIds): array
+    {
+        $rows = DB::table('payroll_loan_installment_schedules as s')
+            ->join('payroll_salary_advance_n_loans as l', 'l.id', '=', 's.payroll_salary_advance_n_loan_id')
+            ->where('s.due_month', $month)
+            ->where('s.due_year', $year)
+            ->whereIn('s.status', ['pending', 'partially_paid'])
+            ->whereNull('s.deleted_at')->whereNull('s.deleted_by')
+            ->where('l.status', 'running')
+            ->where('l.approval_status', 1)
+            ->where('l.is_deduction_held', 0)
+            ->whereNull('l.deleted_at')->whereNull('l.deleted_by')
+            ->when(count($employeeIds) > 0, fn ($q) => $q->whereIn('l.employee_user_id', $employeeIds))
+            ->whereNotExists(function ($q) use ($month, $year) {
+                $q->select(DB::raw(1))
+                    ->from('meal_loan_ait_pf_etc_pauses as p')
+                    ->whereColumn('p.child_data_identifier_key_incoming', 'l.child_data_identifier_key_outgoing')
+                    ->where('p.pause_type', 2) // 2 = loan installment deduction pause
+                    ->where('p.pause_month', $month)
+                    ->where('p.pause_year', $year)
+                    ->where('p.approval_status', 1)
+                    ->whereNull('p.deleted_at');
+            })
+            ->orderBy('s.installment_no')
+            ->get([
+                'l.id as loan_id',
+                'l.employee_user_id',
+                'l.type',
+                'l.child_data_identifier_key_outgoing as loan_key',
+                's.id as schedule_id',
+                // shortfall_amount was already carried to a later row
+                DB::raw('ROUND(s.scheduled_amount + s.carried_forward_in - s.paid_amount - s.waived_amount - s.shortfall_amount, 2) as remaining'),
+            ]);
+
+        $byUser = [];
+        $seenLoan = [];
+        foreach ($rows as $row) {
+            // one row per loan per month (the earliest, same as LoanService::dueRow)
+            if (isset($seenLoan[$row->loan_id]) || (float) $row->remaining <= 0) {
+                continue;
+            }
+            $seenLoan[$row->loan_id] = true;
+            $byUser[$row->employee_user_id][] = $row;
+        }
+
+        foreach ($byUser as &$list) {
+            usort($list, fn ($a, $b) => [self::LOAN_PRIORITY[$a->type] ?? 9, $a->loan_id] <=> [self::LOAN_PRIORITY[$b->type] ?? 9, $b->loan_id]);
+        }
+        unset($list);
+
+        return $byUser;
     }
 }

@@ -353,3 +353,20 @@ if (!function_exists('createNotification'))
 }
 
 
+if(!function_exists('regenerateEmployeeCache'))
+{
+    function regenerateEmployeeCache()
+    {
+        $queueName = 'cacheRegenerate_queue';
+        $payload = [
+            'type' => ['employees','all_employee_short_desc'],
+        ];
+        \Illuminate\Support\Facades\Queue::connection('rabbitmq')->push(
+            new \App\Jobs\RabbitMQJob($payload, $queueName),
+            '',
+            $queueName
+        );
+    }
+}
+
+

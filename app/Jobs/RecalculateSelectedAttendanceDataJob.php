@@ -54,7 +54,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
 
 
         //..... Pull attendance device data
-        if($this->payload['pullDeviceData'] == 1)
+        if (($this->payload['pullDeviceData'] ?? 0) == 1)
         {
             $attendanceDeviceDataPullService = new AttendanceDeviceDataPullService();
             $attendanceDeviceDataPullService->process($this->dates);
@@ -185,15 +185,6 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             $empDates = $this->dates;
 
             foreach ($empDates as $date) {
-                // Skip dates already consumed as the previous day's night-shift checkout.
-                if (isset($prevDaySkipKeys[$row->employee_user_id . '|' . $date])) {
-                    Log::info('RecalculateSelectedAttendanceDataJob skipped date consumed as previous-day night checkout', [
-                        'employee_user_id' => $row->employee_user_id,
-                        'date' => $date,
-                    ]);
-                    continue;
-                }
-
                 $shiftId       = $row->shift_id ?? Shift::find(1)->id;
                 $shift         = $shifts->get($shiftId);
                 $publicHoliday = $publicHolidays->get($date);
