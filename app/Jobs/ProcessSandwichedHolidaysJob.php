@@ -66,6 +66,7 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
 
     protected array $payload;
     protected int $systemUserId;
+    protected ?Carbon $cutoffDate = null;
 
     private const WEEKEND_HOLIDAY_TYPE_ID = 8;
     private const PRESENT_STATUS_CODE = 1;
@@ -73,9 +74,15 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
 
     /**
      * @param array $payload
-     *   - year: int (default: previous month year)
-     *   - month: int (default: previous month)
+     *   - year: int (send it explicitly - when omitted Carbon falls back to the current year)
+     *   - month: int (send it explicitly - when omitted Carbon falls back to the current month)
      *   - employee_user_ids: array|null (optional, specific employees)
+     *   - as_of_date: string|null (optional, 'Y-m-d') - the date the job treats
+     *     as "today". Days on/after it are never read as Absent and holidays
+     *     on/after it are left untouched, exactly as a real daily run on that
+     *     date would behave. Omit it in production (defaults to the real
+     *     today); pass it only to replay past days one by one for testing,
+     *     e.g. {"year":2026,"month":9,"as_of_date":"2026-09-05"}.
      */
     public function __construct(array $payload)
     {
@@ -109,6 +116,15 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
             // boundary are still resolved correctly.
             $startDate = $monthStart->copy()->subDays(14);
             $endDate = $monthEnd->copy()->addDays(14);
+
+            // The job runs daily, so today/future attendance is still
+            // incomplete (hourly processing marks a not-yet-punched day
+            // Absent). Only days up to yesterday are trusted; anything later
+            // is picked up by a following day's run.
+            // Optional payload.as_of_date overrides "today" so past days can be
+            // replayed one by one for testing (see constructor docblock).
+            $this->cutoffDate = $this->resolveCutoffDate($this->payload['as_of_date'] ?? null);
+            Log::info('Sandwich cutoff date (days on/after it are ignored)', ['cutoff' => $this->cutoffDate->toDateString()]);
 
             $employees = $this->getEmployees($employeeIds);
             Log::info("Processing employees", ['employees' => $employees]);
@@ -183,6 +199,9 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         foreach ($holidays as $dateStr => $holiday) {
             $holidayDate = Carbon::parse($dateStr);
             if ($holidayDate->lt($monthStart) || $holidayDate->gt($monthEnd)) {
+                continue;
+            }
+            if ($this->isOnOrAfterCutoff($dateStr)) {
                 continue;
             }
             if (isset($resolvedDates[$dateStr])) {
@@ -295,6 +314,11 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
                 continue;
             }
 
+            // Weekend not fully over yet (possible weekend duty today) - wait for a later run.
+            if ($this->isOnOrAfterCutoff($blockEnd->toDateString())) {
+                continue;
+            }
+
             // Find the previous weekend/holiday block's end date, to bound the work-week.
             $weekStart = $this->findPreviousHolidayBoundary($blockStart, $holidays);
 
@@ -371,20 +395,25 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
 
     /**
      * Walk backward from (blockStart - 1) to find the end of the previous
-     * holiday block, returning the date right after it (exclusive lower
-     * bound of the work-week). Bounded to avoid runaway loops.
+     * holiday block, returning the date right after it (inclusive start of
+     * the work-week).
+     *
+     * The walk is capped at 6 days (one week before a weekend). Without the
+     * cap, once the previous weekend has itself been converted to absent its
+     * holidays-table row is gone, the walk ran back far outside the loaded
+     * attendance window, and the full-week rule could never match again.
      */
     private function findPreviousHolidayBoundary(Carbon $blockStart, \Illuminate\Support\Collection $holidays): Carbon
     {
-        $date = $blockStart->copy()->subDay();
-        $maxSteps = 60;
+        $maxSteps = 6;
+        $date = $blockStart->copy();
 
         for ($i = 0; $i < $maxSteps; $i++) {
-            $dateStr = $date->toDateString();
-            if ($holidays->has($dateStr)) {
-                return $date->copy()->addDay();
+            $previous = $date->copy()->subDay();
+            if ($holidays->has($previous->toDateString())) {
+                break;
             }
-            $date = $date->copy()->subDay();
+            $date = $previous;
         }
 
         return $date;
@@ -427,7 +456,36 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
      */
     private function isAbsent(string $dateStr, \Illuminate\Support\Collection $attendance): bool
     {
+        // Today/future attendance is not final yet, so it never counts as Absent.
+        if ($this->isOnOrAfterCutoff($dateStr)) {
+            return false;
+        }
+
         return $this->hasStatus($dateStr, $attendance, self::ABSENT_STATUS_CODE);
+    }
+
+    /**
+     * "Today" for this run: payload.as_of_date (Y-m-d) when given, otherwise
+     * the real today. An invalid as_of_date fails the job instead of silently
+     * falling back, so a typo never processes days that should be skipped.
+     */
+    private function resolveCutoffDate($asOfDate): Carbon
+    {
+        if ($asOfDate === null || $asOfDate === '') {
+            return Carbon::today();
+        }
+
+        $date = Carbon::createFromFormat('Y-m-d', (string) $asOfDate);
+        if ($date === false || $date->format('Y-m-d') !== (string) $asOfDate) {
+            throw new \InvalidArgumentException("Invalid as_of_date '{$asOfDate}', expected Y-m-d");
+        }
+
+        return $date->startOfDay();
+    }
+
+    private function isOnOrAfterCutoff(string $dateStr): bool
+    {
+        return $this->cutoffDate !== null && Carbon::parse($dateStr)->gte($this->cutoffDate);
     }
 
     private function hasStatus(string $dateStr, \Illuminate\Support\Collection $attendance, int $statusCode): bool
@@ -452,11 +510,10 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         $employeeUserId = $employee->employee_user_id;
 
         DB::transaction(function () use ($employee, $employeeUserId, $dateStr) {
+            // Only this employee's own row - a global (employee_user_id NULL)
+            // holiday belongs to everyone and must not be removed for one absence.
             $deleted = Holiday::where('date', $dateStr)
-                ->where(function ($q) use ($employeeUserId) {
-                    $q->whereNull('employee_user_id')
-                      ->orWhere('employee_user_id', $employeeUserId);
-                })
+                ->where('employee_user_id', $employeeUserId)
                 ->delete();
 
             if ($deleted > 0) {
