@@ -76,6 +76,12 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                 Log::warning('RecalculateAttendanceJob: No dates found for LeaveApplication ID: ' . $leaveApplicationId);
                 return;
             }
+
+            // Weekends/holidays merged into Absent around these dates by
+            // ProcessSandwichedHolidaysJob. Must be read now: recalculating the
+            // leave dates below wipes their absent_bridge rows.
+            $bridgeRestore = app(\App\Services\AbsentBridgeRestoreService::class);
+            $bridgedHolidays = $bridgeRestore->collect($employeeUserId, $leaveDates);
             // ── Process every employee × date ────────────────────────────────────
             $prepared            = [];
             $statusLogData       = [];
@@ -174,6 +180,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
 
             // ── Bulk insert attendance ────────────────────────────────────────────
             if (empty($prepared)) {
+                $bridgeRestore->restore($employeeUserId, $bridgedHolidays);
                 return;
             }
             DB::beginTransaction();
@@ -250,6 +257,11 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
             }
 
             DB::commit();
+
+            // Leave days are no longer Absent, so bring back the weekends/holidays
+            // they had merged into Absent (re-merging any still sandwiched).
+            $bridgeRestore->restore($employeeUserId, $bridgedHolidays);
+
             Log::info('RecalculateAttendanceJob completed successfully for LeaveApplication ID: ' . $leaveApplicationId);
         } catch (\Exception $e) {
             DB::rollBack();
