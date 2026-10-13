@@ -27,7 +27,7 @@ use Illuminate\Support\Facades\Log;
  *   working day immediately before it and an absent working day immediately
  *   after it (skipping over any other holidays that are themselves part of
  *   the same sandwiched chain), the holiday becomes an absent day for that
- *   employee and its holidays-table row is deleted.
+ *   employee and its holidays-table row is soft-deleted.
  *
  * Rule 2 - Full work-week absent -> trailing weekend absent:
  *   For each of an employee's weekend blocks (one or more consecutive dates
@@ -37,14 +37,16 @@ use Illuminate\Support\Facades\Log;
  *   are holidays (not weekend, not absent) are skipped when checking; only
  *   the actual working days are examined. If every one of those working
  *   days is Absent, the whole weekend block becomes absent and its
- *   holidays-table rows are deleted. This rule only looks backward (the
+ *   holidays-table rows are soft-deleted. This rule only looks backward (the
  *   week before the weekend), never forward.
  *
  * In both rules, if the employee actually worked (Present) on a would-be
  * absent weekend/holiday day (weekend duty), that day is left untouched.
  *
  * When a day becomes absent:
- * 1. Its holidays-table row(s) are deleted.
+ * 1. Its holidays-table row(s) are soft-deleted (deleted_at, deleted_by =
+ *    system user), so AbsentBridgeRestoreService can restore them when one
+ *    of the absences behind the merge is later approved as leave.
  * 2. Any existing attendance/status-log/leave-achieve-log rows for that date
  *    are deleted.
  * 3. A minimal employee_attendance row is inserted (no punches, no shift
@@ -400,7 +402,7 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
      *
      * The walk is capped at 6 days (one week before a weekend). Without the
      * cap, once the previous weekend has itself been converted to absent its
-     * holidays-table row is gone, the walk ran back far outside the loaded
+     * holidays-table row is soft-deleted (no longer loaded), the walk ran back far outside the loaded
      * attendance window, and the full-week rule could never match again.
      */
     private function findPreviousHolidayBoundary(Carbon $blockStart, \Illuminate\Support\Collection $holidays): Carbon
@@ -502,7 +504,7 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
     }
 
     /**
-     * Delete the holiday row(s) for this date and write a minimal Absent
+     * Soft-delete the holiday row(s) for this date and write a minimal Absent
      * attendance record directly - no punch/shift recalculation involved.
      */
     private function markDateAbsent(EmployeeOfficialInformation $employee, string $dateStr): void
@@ -512,12 +514,17 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         DB::transaction(function () use ($employee, $employeeUserId, $dateStr) {
             // Only this employee's own row - a global (employee_user_id NULL)
             // holiday belongs to everyone and must not be removed for one absence.
+            // Soft delete (deleted_by = system user) so AbsentBridgeRestoreService
+            // can bring the weekend/holiday back when an absence turns into leave.
             $deleted = Holiday::where('date', $dateStr)
                 ->where('employee_user_id', $employeeUserId)
-                ->delete();
+                ->update([
+                    'deleted_at' => Carbon::now(),
+                    'deleted_by' => $this->systemUserId,
+                ]);
 
             if ($deleted > 0) {
-                Log::info("Deleted holiday for employee {$employeeUserId} on {$dateStr}");
+                Log::info("Soft-deleted holiday for employee {$employeeUserId} on {$dateStr}");
             }
 
             $this->deleteExistingAttendance($employeeUserId, $dateStr);
