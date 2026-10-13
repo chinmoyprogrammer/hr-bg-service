@@ -664,6 +664,11 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         'created_at' => date('Y-m-d H:i:s'),
                     ];
                 }
+
+                // get cash , bank , mfs amount
+                $cashBankMfs = $this->getCashBankMfsAmount($user->hasOfficialInformation, $netLeft);
+
+
                 // employee total salary calculation
                 $PayrollSalarySheetTemp[] = [
                     'employee_user_id' => $user->id,
@@ -678,6 +683,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     'net_salary_payable' => $total_earning - $total_deductable,
                     'month' => $generateMonth,
                     'year' => $generateYear,
+                    'cash_payable' => $cashBankMfs['cash'],
+                    'bank_payable' => $cashBankMfs['bank'],
+                    'mfs_payable' => $cashBankMfs['mfs'],
                     'from_date' => date("Y-m-01", strtotime($payload['salary_calculate_month_year'])),
                     'to_date' => date("Y-m-t", strtotime($payload['salary_calculate_month_year'])),
                     'created_user_id' => getUserId(), // todo:: need a system user id
@@ -821,6 +829,30 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
         }
+    }
+
+
+    // get cash , bank , mfs amount
+    private function getCashBankMfsAmount($data, $salaryPayable)
+    {
+        $cashLimit = max(0, (float) ($data->cash_pay_amount ?? 0));
+        $bankLimit = max(0, (float) ($data->bank_pay_amount ?? 0));
+        $remaining = max(0, round((float) $salaryPayable, 2));
+
+        // first pay cash , if some amount rest after cash pay max of bank, after bank fills rest will go to mfs
+        $cash = min($cashLimit, $remaining);
+        $remaining = round($remaining - $cash, 2);
+
+        $bank = min($bankLimit, $remaining);
+        $remaining = round($remaining - $bank, 2);
+
+        $mfs = $remaining;
+
+        return [
+            'cash' => round($cash, 2),
+            'bank' => round($bank, 2),
+            'mfs' => round($mfs, 2),
+        ];
     }
 
     /**
