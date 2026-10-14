@@ -11,6 +11,7 @@ use App\Models\EmployeeOtRequisition;
 use App\Models\Holiday;
 use App\Models\HolidayDutyRequisition;
 use App\Models\LeaveApplicationDetail;
+use App\Models\ManualAttendanceRecord;
 use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\Shift;
 use App\Services\AttendanceDeviceDataPullService;
@@ -131,9 +132,31 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             ->keyBy('employee_user_id');
 
         // ── Delete existing attendance records for the submitted emp × date pairs
-        $attRecordIds = EmployeeAttendance::whereIn('employee_user_id', $this->employeeUserIds)    
+        $existingRows = EmployeeAttendance::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereIn('date', $this->dates)
-            ->pluck('id');
+            ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_date', 'out_time', 'source', 'is_manual', 'is_corrected', 'remarks']);
+        $attRecordIds = $existingRows->pluck('id');
+
+        // Manual / corrected punches (CSV import, attendance correction) live only on the
+        // attendance row, not in employee_attendance_temp. Keep them so the recalculation
+        // (e.g. after a leave approval) re-applies them instead of marking the day absent.
+        $manualPunchMap = [];
+        $oldIdByEmpDate = [];
+        foreach ($existingRows as $existing) {
+            $empDateKey = $existing->employee_user_id . '|' . $existing->date;
+            $oldIdByEmpDate[$empDateKey] = $existing->id;
+            $isManualSource = $existing->source === 'manual' || $existing->is_manual || $existing->is_corrected;
+            if ($isManualSource && ($existing->in_time || $existing->out_time)) {
+                $manualPunchMap[$empDateKey] = [
+                    'in_time'      => $existing->in_time,
+                    'out_date'     => $existing->out_date,
+                    'out_time'     => $existing->out_time,
+                    'is_manual'    => $existing->is_manual,
+                    'is_corrected' => $existing->is_corrected,
+                    'remarks'      => $existing->remarks,
+                ];
+            }
+        }
 
         if ($attRecordIds->isNotEmpty()) {
             $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
@@ -191,7 +214,10 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                 
 
-                //Log::warning('manual:', ['manualPunch'=>$manualPunch]);
+                $manualPunch = $manualPunchMap[$row->employee_user_id . '|' . $date] ?? null;
+                // process() replaces $row->employeeAttendanceTemps with the manual punches;
+                // keep the real biometric temps for this employee's other dates
+                $biometricTemps = $row->employeeAttendanceTemps;
 
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
                     $row,
@@ -200,9 +226,17 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                     $publicHoliday,
                     $empHoliday,
                     $holidayDutyRequisitions,
-                    $otRequisition, 
-                    $empLeaveDetails
+                    $otRequisition,
+                    $empLeaveDetails,
+                    $manualPunch,
+                    null,
+                    $systemUserId
                 );
+
+                if ($manualPunch) {
+                    unset($row->employeeAttendanceTemps);
+                    $row->setRelation('employeeAttendanceTemps', $biometricTemps);
+                }
 
                 if ($result['skip']) {
                     continue;
@@ -270,6 +304,16 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                 . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
             $idMap[$k]                                              = $r->id;
             $idMapByEmpDate[$r->employee_user_id . '|' . $r->date] = $r->id;
+        }
+
+        // ── Point manual attendance records at the recreated attendance rows ──
+        foreach ($oldIdByEmpDate as $empDateKey => $oldId) {
+            if (isset($idMapByEmpDate[$empDateKey])) {
+                // toBase(): the table has no updated_at column for Eloquent to touch
+                ManualAttendanceRecord::where('employee_attendance_id', $oldId)
+                    ->toBase()
+                    ->update(['employee_attendance_id' => $idMapByEmpDate[$empDateKey]]);
+            }
         }
 
         // ── Insert status logs ────────────────────────────────────────────────
