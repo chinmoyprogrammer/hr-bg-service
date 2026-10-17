@@ -125,7 +125,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 ),
                 'hasNonWeekendHolidays' => fn($q) => $q
                     ->whereBetween('date', [$startBoundary, $endBoundary])
-                    ->where('holiday_type_id', 8)
+                    ->where('holiday_type_id', '<>', 8)
         ])
         ->whereIn('employee_user_id', $empUserIds)
         ->where(function ($q) use ($endDate) {
@@ -361,7 +361,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
                 'employee_attendance_id' => $employeeAttendanceId,
                 'created_at' => $jobEnd,
                 'created_by' => $this->payload[0]['created_user_id'] ?? 0,
-                'employee_user_id' => $r->employee_user_id,
+                'employee_user_id' => (int) $employeeUserId,
             ];
         }
 

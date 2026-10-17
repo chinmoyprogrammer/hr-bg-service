@@ -103,6 +103,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                     (new ProcessSandwichedHolidaysJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
+                if ($targetQueue === 'activatePfPolicy_queue') {
+                    (new ActivatePfPolicyJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
 
                 Log::info('RabbitMQJob skipped re-publish due to same queue', ['queue' => $targetQueue, 'payload' => $this->data]);
                 return;

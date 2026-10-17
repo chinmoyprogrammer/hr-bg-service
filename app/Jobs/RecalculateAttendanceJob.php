@@ -9,6 +9,7 @@ use App\Models\EmployeeLeaveBalance;
 use App\Models\EmployeeOfficialInformation;
 use App\Models\Holiday;
 use App\Models\LeaveApplicationDetail;
+use App\Models\ManualAttendanceRecord;
 use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\Shift;
 use Illuminate\Bus\Queueable;
@@ -76,6 +77,12 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                 Log::warning('RecalculateAttendanceJob: No dates found for LeaveApplication ID: ' . $leaveApplicationId);
                 return;
             }
+
+            // Weekends/holidays merged into Absent around these dates by
+            // ProcessSandwichedHolidaysJob. Must be read now: recalculating the
+            // leave dates below wipes their absent_bridge rows.
+            $bridgeRestore = app(\App\Services\AbsentBridgeRestoreService::class);
+            $bridgedHolidays = $bridgeRestore->collect($employeeUserId, $leaveDates);
             // ── Process every employee × date ────────────────────────────────────
             $prepared            = [];
             $statusLogData       = [];
@@ -87,7 +94,18 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
             $leaveLogKeyIndex    = [];
 
 
-            $attRecordIds = EmployeeAttendance::whereIn('date', $leaveDates )->whereRaw('is_corrected = 0 AND is_manual = 0')->pluck('id');
+            // Manual / corrected punches (CSV import, attendance correction) live only on the
+            // attendance row. Read them before the rows are deleted below, so a half-day
+            // leave keeps the half the employee actually worked.
+            $manualRows = EmployeeAttendance::where('employee_user_id', $employeeUserId)
+                ->whereIn('date', $leaveDates)
+                ->where(fn($q) => $q->where('is_manual', 1)->orWhere('is_corrected', 1)->orWhere('source', 'manual'))
+                ->where(fn($q) => $q->whereNotNull('in_time')->orWhereNotNull('out_time'))
+                ->get(['id', 'date', 'in_time', 'out_date', 'out_time', 'is_manual', 'is_corrected', 'remarks'])
+                ->keyBy('date');
+            $manualRowIdsUsed = []; // date => old attendance id, for re-linking manual_attendance_records
+
+            $attRecordIds = EmployeeAttendance::where('employee_user_id', $employeeUserId)->whereIn('date', $leaveDates )->whereRaw('is_corrected = 0 AND is_manual = 0')->pluck('id');
 
             if ($attRecordIds->isNotEmpty()) {
                 $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
@@ -121,8 +139,41 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                     'employeeAttendanceTemps' => function ($query) {
                         $query->whereRaw('1 = 0'); // Forces empty result
                     },
+                    // Late deduction (reached when a half-day leave day has punches) counts
+                    // this month's late days only — same scope as ProcessManualDataJob
+                    'lateDays' => fn($q) => $q
+                        ->whereBetween('attendance_date', [date('Y-m-01', strtotime($date)), date('Y-m-t', strtotime($date))])
+                        ->where('attendance_status', 2)
+                        ->whereHas('attendance')
+                        ->with(['attendance:id,shift_id,shift_start_time,in_time,out_time']),
                 ])->where('employee_user_id', $employeeUserId)->first();
                 $shift = $row->shift_id ? Shift::find($row->shift_id) :  Shift::find(1);
+
+                // Half-day leave (4 = 1st half, 6 = 2nd half): the other half may have been
+                // worked, so the day's own punches are used — manual/corrected first, else
+                // biometric. Full-day leave keeps ignoring punches as before.
+                $manualPunch = null;
+                $leaveDetail = $keyedLeaveDetails->get($date);
+                if ($leaveDetail && in_array((int) $leaveDetail->first_second_half, [4, 6], true)) {
+                    $manualRow = $manualRows->get($date);
+                    if ($manualRow) {
+                        $manualPunch = [
+                            'in_time'      => $manualRow->in_time,
+                            'out_date'     => $manualRow->out_date,
+                            'out_time'     => $manualRow->out_time,
+                            'is_manual'    => $manualRow->is_manual,
+                            'is_corrected' => $manualRow->is_corrected,
+                            'remarks'      => $manualRow->remarks,
+                        ];
+                        $manualRowIdsUsed[$date] = $manualRow->id;
+                    } else {
+                        $row->setRelation('employeeAttendanceTemps', $row->employeeAttendanceTemps()
+                            ->whereRaw('DATE(punch_datetime) = ?', [$date])
+                            ->orderBy('punch_datetime')
+                            ->get());
+                    }
+                }
+
                 EmployeeAttendanceStatusLog::where('attendance_date', $date)->where('employee_user_id', $employeeUserId)->delete();
                 EmployeeAttendance::where('date', $date)->where('employee_user_id', $employeeUserId)->delete();
                 $result = app(\App\Services\AttendanceProcessingService::class)->process(
@@ -131,10 +182,10 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                     $shift,
                     null,
                     null,
-                    null,
+                    collect(), // holiday duty requisitions: the punch path requires a Collection
                     null,
                     $keyedLeaveDetails,
-                    null,
+                    $manualPunch,
                     null,
                     null
                 );
@@ -174,6 +225,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
 
             // ── Bulk insert attendance ────────────────────────────────────────────
             if (empty($prepared)) {
+                $bridgeRestore->restore($employeeUserId, $bridgedHolidays);
                 return;
             }
             DB::beginTransaction();
@@ -202,6 +254,16 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                     . '|' . ($r->in_time ?? '') . '|' . ($r->out_time ?? '') . '|' . $r->created_at;
                 $idMap[$k]                                                  = $r->id;
                 $idMapByEmpDate[$r->employee_user_id . '|' . $r->date]     = $r->id;
+            }
+
+            // ── Point manual attendance records at the recreated attendance rows ──
+            foreach ($manualRowIdsUsed as $date => $oldId) {
+                if (isset($idMapByEmpDate[$employeeUserId . '|' . $date])) {
+                    // toBase(): the table has no updated_at column for Eloquent to touch
+                    ManualAttendanceRecord::where('employee_attendance_id', $oldId)
+                        ->toBase()
+                        ->update(['employee_attendance_id' => $idMapByEmpDate[$employeeUserId . '|' . $date]]);
+                }
             }
 
             // ── Insert status logs ────────────────────────────────────────────────
@@ -250,6 +312,11 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
             }
 
             DB::commit();
+
+            // Leave days are no longer Absent, so bring back the weekends/holidays
+            // they had merged into Absent (re-merging any still sandwiched).
+            $bridgeRestore->restore($employeeUserId, $bridgedHolidays);
+
             Log::info('RecalculateAttendanceJob completed successfully for LeaveApplication ID: ' . $leaveApplicationId);
         } catch (\Exception $e) {
             DB::rollBack();
