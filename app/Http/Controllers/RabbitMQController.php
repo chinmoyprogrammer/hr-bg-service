@@ -8,6 +8,7 @@ use App\Jobs\ProcessTempSalaryJob;
 use App\Jobs\ProcessRealSalaryJob;
 use App\Jobs\ConfirmProvisionalEmployeesJob;
 use App\Jobs\ProcessSandwichedHolidaysJob;
+use App\Jobs\EmployeeTransferApplyJob;
 use Illuminate\Http\Request;
 
 class RabbitMQController extends Controller
@@ -48,6 +49,10 @@ class RabbitMQController extends Controller
                 ->onConnection('rabbitmq'));
         } elseif ($queueName === 'processSandwichedHolidays_queue') {
             dispatch((new ProcessSandwichedHolidaysJob(is_array($payload) ? $payload : ['payload' => $payload]))
+                ->onQueue($queueName)
+                ->onConnection('rabbitmq'));
+        } elseif ($queueName === 'employeeTransferApply_queue') {
+            dispatch((new EmployeeTransferApplyJob(is_array($payload) ? $payload : []))
                 ->onQueue($queueName)
                 ->onConnection('rabbitmq'));
         } else {
