@@ -45,7 +45,7 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
         $employeeIds = $this->payload['employee_user_ids'] ?? null;
         $employeeIds = is_array($employeeIds) ? array_values(array_filter($employeeIds)) : [];
 
-        $systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $systemUserId = (int) env('SYSTEM_USER_ID', 566);
         $now = date('Y-m-d H:i:s');
 
         /*
@@ -353,7 +353,7 @@ class InsertWeekendHolidaysJob extends Job implements ShouldQueue
     
     private function calculateAndInsertWorkingDays(int $year, ?array $employeeIds, array $rowsByKey): void
     {
-        $systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $systemUserId = (int) env('SYSTEM_USER_ID', 566);
         $now = date('Y-m-d H:i:s');
         
         // Get all employees (or filtered ones)
