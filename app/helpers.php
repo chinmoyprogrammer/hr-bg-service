@@ -155,7 +155,7 @@ if (!function_exists('getUserId'))
 {
     function getUserId()
     {
-        $defaultId = (int) env('SYSTEM_USER_ID', 195);
+        $defaultId = (int) env('SYSTEM_USER_ID', 1949);
         try {
             if (app()->bound('x_user_id')) {
                 $id = app('x_user_id');

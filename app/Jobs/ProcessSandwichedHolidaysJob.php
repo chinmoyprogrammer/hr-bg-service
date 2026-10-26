@@ -89,7 +89,7 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
     public function __construct(array $payload)
     {
         $this->payload = $payload;
-        $this->systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $this->systemUserId = (int) env('SYSTEM_USER_ID', 566);
         $this->connection = 'rabbitmq';
         $this->queue = 'processSandwichedHolidays_queue';
     }

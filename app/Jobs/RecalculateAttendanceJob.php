@@ -53,7 +53,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
             }
 
             $jobStart      = date('Y-m-d H:i:s');
-            $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
+            $systemUserId  = (int) env('SYSTEM_USER_ID', 566);
 
 
             // 1. Get Leave Details (dates and employee)

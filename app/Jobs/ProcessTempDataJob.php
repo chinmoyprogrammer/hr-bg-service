@@ -201,7 +201,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $startBoundary = \Carbon\Carbon::parse($startDate)->startOfDay()->toDateString();
             $endBoundary   = \Carbon\Carbon::parse($endDate)->endOfDay()->toDateString();
             $jobStart      = date('Y-m-d H:i:s');
-            $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
+            $systemUserId  = (int) env('SYSTEM_USER_ID', 566);
 
             // The previous-day-checkout pre-pass backfills date D using date D+1's
             // early punches. When the pull range ends at $endDate, D+1's punches

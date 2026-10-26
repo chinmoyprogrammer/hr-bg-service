@@ -88,7 +88,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         $startBoundary = \Carbon\Carbon::parse($startDate)->startOfDay()->toDateString();
         $endBoundary   = \Carbon\Carbon::parse($endDate)->endOfDay()->toDateString();
         $jobStart      = date('Y-m-d H:i:s');
-        $systemUserId  = $this->payload['created_user_id'] ?? (int) env('SYSTEM_USER_ID', 1);
+        $systemUserId  = $this->payload['created_user_id'] ?? (int) env('SYSTEM_USER_ID', 566);
 
         // ── Build a quick lookup: [employee_user_id|date => row] ──────────────
         // Used later to pass in_time / out_time into the service as "manual punch"

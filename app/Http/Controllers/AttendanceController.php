@@ -272,7 +272,7 @@ class AttendanceController extends Controller
                     ->where('punch_datetime', '<=', $endBoundary)
                     ->get();
 
-                $systemUserId = (int) env('SYSTEM_USER_ID', 1);
+                $systemUserId = (int) env('SYSTEM_USER_ID', 566);
                 $prepared = [];
                 $skipped = [];
 

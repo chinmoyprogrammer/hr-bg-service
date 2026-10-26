@@ -69,7 +69,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             return;
         }
 
-        $systemUserId  = (int) env('SYSTEM_USER_ID', 1);
+        $systemUserId  = (int) env('SYSTEM_USER_ID', 566);
 
         $startBoundary = $this->dates[0];
         $endBoundary   = $this->dates[count($this->dates) - 1];

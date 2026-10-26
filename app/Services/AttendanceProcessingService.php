@@ -28,7 +28,7 @@ class AttendanceProcessingService
 
     public function __construct()
     {
-        $this->systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $this->systemUserId = (int) env('SYSTEM_USER_ID', 566);
         $this->isManual = 0;
         $this->isCorrected = 0;
         $this->source = 'biometric';
