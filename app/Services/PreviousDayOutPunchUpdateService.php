@@ -47,7 +47,7 @@ class PreviousDayOutPunchUpdateService
 
     public function __construct()
     {
-        $this->systemUserId = (int) env('SYSTEM_USER_ID', 1);
+        $this->systemUserId = (int) env('SYSTEM_USER_ID', 566);
     }
 
     /**
