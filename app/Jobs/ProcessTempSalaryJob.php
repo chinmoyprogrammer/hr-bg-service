@@ -197,7 +197,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                 //.... extract deductable late days, weekends, holidays, paid leave, absent days
                 $late_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status',2)->count() ?? 0;
-                $deductable_late_days = (int) ($late_days / $late_deduction_policy->max_late_days);
+                $deductable_late_days = (int) ($late_days / ($late_deduction_policy->max_late_days+1));
 
 
                 $payable_days = $total_present_days 
