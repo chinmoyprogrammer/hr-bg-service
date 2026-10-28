@@ -370,3 +370,79 @@ if(!function_exists('regenerateEmployeeCache'))
 }
 
 
+
+// Old ERP (mbw_erp) lookup codes for type = marital_status. Widowed has no code there yet.
+if (!defined('OLD_ERP_MARITAL_STATUS')) {
+    define('OLD_ERP_MARITAL_STATUS', [
+        'Single'   => 58,
+        'Married'  => 59,
+        'Divorced' => 60,
+    ]);
+}
+
+if (!function_exists('old_erp_marital_status'))
+{
+    /**
+     * Map employee_basic_information.marital_status (enum text) to the old ERP lookup code
+     * for the old ERP employee API. Returns null when there is no code (e.g. Widowed),
+     * so the caller can leave the field out instead of sending a wrong value.
+     */
+    function old_erp_marital_status(?string $value): ?int
+    {
+        return OLD_ERP_MARITAL_STATUS[ucfirst(strtolower(trim((string) $value)))] ?? null;
+    }
+}
+
+if (!function_exists('old_erp_id_to_text'))
+{
+    /**
+     * The old ERP employee API keeps some fields as text where the new app keeps an id
+     * (occupation, bank, bank branch). Returns the text for the id from $table.$column,
+     * or null when the id is empty / unknown, so null is sent to the API.
+     */
+    function old_erp_id_to_text(string $table, $id, string $column = 'name'): ?string
+    {
+        if (empty($id)) {
+            return null;
+        }
+        $text = \Illuminate\Support\Facades\DB::table($table)->where('id', $id)->value($column);
+        return $text === null || trim($text) === '' ? null : $text;
+    }
+}
+
+if (!function_exists('old_erp_occupation_name'))
+{
+    // father_occupation / mother_occupation <- employee_basic_information.*_occupation_id
+    function old_erp_occupation_name($occupationId): ?string
+    {
+        return old_erp_id_to_text('occupations', $occupationId);
+    }
+}
+
+if (!function_exists('old_erp_bank_name'))
+{
+    // bank <- employee_official_information.bank_name_id
+    function old_erp_bank_name($bankNameId): ?string
+    {
+        return old_erp_id_to_text('bank_names', $bankNameId);
+    }
+}
+
+if (!function_exists('old_erp_bank_branch_name'))
+{
+    // bank_branch <- employee_official_information.branch_name_id
+    function old_erp_bank_branch_name($branchNameId): ?string
+    {
+        return old_erp_id_to_text('bank_branches', $branchNameId, 'branch_name');
+    }
+}
+
+if (!function_exists('old_erp_text'))
+{
+    // plain text fields (e.g. bank_ac_no <- employee_official_information.bank_account_no): blank -> null
+    function old_erp_text($value): ?string
+    {
+        $value = trim((string) $value);
+        return $value === '' ? null : $value;
+    }
+}
