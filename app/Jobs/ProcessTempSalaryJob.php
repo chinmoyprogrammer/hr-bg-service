@@ -29,6 +29,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
     protected array $payload;
 
+    // seconds; overrides the worker's --timeout (salary for all employees runs long)
+    public $timeout = 600;
+
     // salary head per loan type
     private const LOAN_HEADS = [
         'loan'    => 18, // Loan Installment(Long)

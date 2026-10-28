@@ -29,7 +29,6 @@ class CreateDeviceUserByEmpCode extends Job implements ShouldQueue
         }
 
         $token = $this->getToken();
-        Log::info('CreateDeviceUserByEmpCode: token = ' . $token);
         if ($token === '') {
             return;
         }

@@ -39,7 +39,7 @@ EXPOSE 80
 
 # Configure PHP-FPM to use TCP/IP socket
 # Install required PHP extensions
-RUN apt-get update && apt-get install -y default-mysql-client libpq-dev libzip-dev zip && docker-php-ext-install pdo pdo_mysql zip opcache
+RUN apt-get update && apt-get install -y default-mysql-client libpq-dev libzip-dev zip && docker-php-ext-install pdo pdo_mysql zip opcache pcntl
 
 # Install and enable PHP Redis extension
 RUN pecl install redis \

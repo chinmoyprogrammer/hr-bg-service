@@ -4,8 +4,11 @@ set -e
 # Configurable via environment; sensible defaults provided
 QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,processManualData_queue,insertWeekendHolidays_queue,processTempSalary_queue,processRealSalary_queue,absentAdjustmentWithLeave_queue,sendBulkSMS_queue,sendBulkSMSToMultiUserOneSMS_queue,recalculateAttendance_queue,employeeDeactivation_queue,createDeviceUserByEmpCode_queue,confirmProvisionalEmployees_queue,recalculateSelectedAttendanceData_queue,syncRosterAssignments_queue,fiscalYearClosing_queue,cacheRegenerate_queue,processSandwichedHolidays_queue,activatePfPolicy_queue,employeeTransferApply_queue}"
 SLEEP="${HR_BG_WORKER_SLEEP:-1}"
-TRIES="${HR_BG_WORKER_TRIES:-100}"
-TIMEOUT="${HR_BG_WORKER_TIMEOUT:-60}"
+TRIES="${HR_BG_WORKER_TRIES:-3}"
+# Seconds to wait before attempt 2, 3, ...
+BACKOFF="${HR_BG_WORKER_BACKOFF:-30,120,600}"
+# Enforced via pcntl; jobs can override with public $timeout
+TIMEOUT="${HR_BG_WORKER_TIMEOUT:-300}"
 MAX_JOBS="${HR_BG_WORKER_MAX_JOBS:-100}"
 STOP_WHEN_EMPTY="${HR_BG_WORKER_STOP_WHEN_EMPTY:-0}"
 TRIGGER_ENABLED="${HR_BG_TRIGGER_ENABLED:-1}"
@@ -28,7 +31,7 @@ if [ "$TRIGGER_ENABLED" = "1" ] || [ "$TRIGGER_ENABLED" = "true" ]; then
 fi
 
 while true; do
-  echo "[worker] starting: queues=$QUEUES sleep=$SLEEP tries=$TRIES timeout=$TIMEOUT"
+  echo "[worker] starting: queues=$QUEUES sleep=$SLEEP tries=$TRIES backoff=$BACKOFF timeout=$TIMEOUT"
   STOP_FLAG=""
   if [ "$STOP_WHEN_EMPTY" = "1" ] || [ "$STOP_WHEN_EMPTY" = "true" ]; then
     STOP_FLAG="--stop-when-empty"
@@ -39,6 +42,7 @@ while true; do
     --queue="$QUEUES" \
     --sleep="$SLEEP" \
     --tries="$TRIES" \
+    --backoff="$BACKOFF" \
     --timeout="$TIMEOUT" \
     --max-jobs="$MAX_JOBS" \
     $STOP_FLAG \

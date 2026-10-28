@@ -24,6 +24,9 @@ class RabbitMQJob extends Job implements ShouldQueue
     protected $data;
     protected $queueName;
 
+    // seconds; handle() can run ProcessTempSalaryJob inline, so match its limit
+    public $timeout = 600;
+
     /**
      * Create a new job instance.
      *

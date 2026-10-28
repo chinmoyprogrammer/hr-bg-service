@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HR BG Service — Job Failure Tracking Plan</title>
+  <style>
+    body {font-family: Arial, sans-serif; line-height: 1.5; color: #222; margin: 24px; max-width: 1100px;}
+    h1, h2, h3 {margin: 0.6em 0 0.3em;}
+    h1 {font-size: 24px;}
+    h2 {font-size: 18px;}
+    h3 {font-size: 16px;}
+    p {margin: 0.4em 0;}
+    .muted {color: #666;}
+    .card {border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 16px 0;}
+    .grid {display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;}
+    ul, ol {margin: 0.3em 0 0.6em 1.2em; padding-left: 0.6em;}
+    code {background: #f7f7f7; padding: 2px 4px; border-radius: 4px; font-size: 13px;}
+    pre {background: #f7f7f7; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px;}
+    table {width: 100%; border-collapse: collapse; margin: 10px 0;}
+    th, td {border: 1px solid #ddd; padding: 8px; vertical-align: top; text-align: left;}
+    th {background: #fafafa;}
+    .week {border-left: 4px solid #0078d4; padding-left: 12px; margin: 20px 0;}
+    .week.urgent {border-left-color: #c62828;}
+    .badge {display: inline-block; background: #eef6ff; color: #004a86; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin-left: 8px;}
+    .b-red {background: #fdecea; color: #8e1b1b;}
+    .b-amber {background: #fff4e0; color: #7a4a00;}
+    .b-green {background: #e8f5e9; color: #1b5e20;}
+    .b-gray {background: #f1f1f1; color: #444;}
+    .checklist li {margin-bottom: 4px;}
+  </style>
+  <meta name="description" content="End-to-end plan for tracking failed, soft-failed, rolled-back, hung, late and missed background jobs in hr-bg-service, with run logs, alerts and a dashboard.">
+</head>
+<body>
+  <h1>HR BG Service — Job Failure Tracking Plan</h1>
+  <p class="muted">Scope: <code>hr-bg-service</code> (Lumen 10 + RabbitMQ) and <code>task-scheduler</code> (FastAPI + APScheduler) • Written 2026-10-28 • Estimate: <strong>≈ 8 working days</strong> across 6 phases</p>
+
+  <div class="card">
+    <h2>Goal</h2>
+    <p>Every background job run gets <strong>one row</strong> in <code>job_runs</code> that says what happened, why, how long it took, what it wrote or rolled back, and what it logged. A watchdog catches the things that leave no row (missed schedules, dead workers, stuck queues). Problems go to one alert channel with dedupe and a "resolved" message. Nothing in the existing job classes has to change for the core to work.</p>
+  </div>
+
+  <div class="card">
+    <h2>Current state (checked on the running containers)</h2>
+    <table>
+      <tr><th>Finding</th><th>Effect today</th><th>Fixed in</th></tr>
+      <tr><td><code>task-scheduler/app/main.py:255</code> has committed merge markers; container is in a restart loop</td><td>No cron job is firing at all. Nobody was alerted.</td><td>Phase 0</td></tr>
+      <tr><td><code>QUEUE_FAILED_DRIVER</code> = <code>null</code></td><td>Failed jobs are discarded after the last attempt</td><td>Phase 0</td></tr>
+      <tr><td><code>--tries=100</code> in <code>start-worker.sh</code>, no backoff</td><td>A broken job retries 100 times back to back and blocks every other queue</td><td>Phase 0</td></tr>
+      <tr><td><code>pcntl</code> extension missing from the image</td><td><code>--timeout=60</code> is silently ignored; a hung job hangs the worker forever</td><td>Phase 0</td></tr>
+      <tr><td>~15 <code>catch { Log::error(...); return; }</code> blocks in jobs (e.g. <code>ProcessTempDataJob:663</code>, <code>EmployeeDeactivation:132</code>, <code>RabbitMQJob:144</code>)</td><td>Errors and rollbacks look like success to the worker</td><td>Phase 1</td></tr>
+      <tr><td>Trigger consumer acks bad JSON and <code>reject(false)</code>s dispatch errors, no dead-letter exchange</td><td>Bad trigger messages vanish</td><td>Phase 1</td></tr>
+      <tr><td><code>legacySync_trigger_queue</code>: 2 messages, 0 consumers</td><td>Published nightly, never consumed</td><td>Phase 0 (decide) / Phase 2 (detect)</td></tr>
+      <tr><td>One <code>queue:work</code> process serves all 19 queues</td><td>A long salary run delays hourly attendance processing</td><td>Phase 2 (detect late starts)</td></tr>
+      <tr><td><code>CreateDeviceUserByEmpCode.php:32</code> logs the ZKBio JWT</td><td>Credential in log files</td><td>Phase 0</td></tr>
+      <tr><td>CLI PHP defaults to UTC; app sets Asia/Dhaka in <code>bootstrap/app.php</code>; container clock is +06</td><td>Mixing MySQL <code>CURRENT_TIMESTAMP</code> with PHP time could skew 6h</td><td>Phase 1 (rule)</td></tr>
+      <tr><td><code>/api/*</code> routes have no auth (<code>Authenticate</code> is commented out)</td><td>A dashboard showing payloads and logs would be public</td><td>Phase 4</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Status model</h2>
+    <p>One final status per run, plus flags that can stack on any status.</p>
+    <table>
+      <tr><th>Status</th><th>Meaning</th><th>Written by</th><th>Alert</th></tr>
+      <tr><td><span class="badge b-gray">queued</span> / <span class="badge b-gray">running</span></td><td>In flight</td><td>Trigger consumer / <code>Queue::before</code></td><td>—</td></tr>
+      <tr><td><span class="badge b-green">success</span></td><td>Finished, no error logged, nothing rolled back</td><td><code>Queue::after</code></td><td>Sends "resolved" if an alert was open</td></tr>
+      <tr><td><span class="badge b-amber">completed_with_errors</span></td><td>Returned normally, but logged at error level</td><td><code>Queue::after</code> + log tap</td><td>Amber, deduped</td></tr>
+      <tr><td><span class="badge b-amber">partial</span></td><td>Some transactions committed, some rolled back</td><td><code>Queue::after</code> + DB tx events</td><td>Amber, deduped</td></tr>
+      <tr><td><span class="badge b-red">rolled_back</span></td><td>Every write undone, but the job returned normally</td><td><code>Queue::after</code> + DB tx events</td><td>Red</td></tr>
+      <tr><td><span class="badge b-red">failed</span></td><td>Threw after the last attempt, nothing committed. Safe to retry.</td><td><code>Queue::failing</code></td><td>Red</td></tr>
+      <tr><td><span class="badge b-red">failed_retry_unsafe</span></td><td>Threw after committing writes. A retry would apply them twice.</td><td><code>Queue::failing</code></td><td>Red, auto-retry blocked</td></tr>
+      <tr><td><span class="badge b-red">timed_out</span></td><td>Killed at timeout, or still "running" past <code>max_runtime</code></td><td>Worker (pcntl) / watchdog</td><td>Red</td></tr>
+      <tr><td><span class="badge b-red">lost</span></td><td>Worker died mid-run (OOM, container kill). Fatal reason stored if available.</td><td>Shutdown handler / watchdog</td><td>Red</td></tr>
+      <tr><td><span class="badge b-red">trigger_failed</span></td><td>Trigger message unparseable or not dispatchable. Raw body kept for replay.</td><td>Trigger consumer</td><td>Red</td></tr>
+      <tr><td><span class="badge b-red">missed</span></td><td>Schedule was due and no run started within the grace period</td><td>Watchdog</td><td>Red</td></tr>
+      <tr><td><span class="badge b-amber">stuck</span></td><td>Queue has messages but 0 consumers, or its oldest message is too old</td><td>Watchdog</td><td>Amber</td></tr>
+    </table>
+    <p><strong>Flags:</strong> <code>late</code> (time from queued to started over <code>max_wait</code>), <code>zero_output</code> (reported count is 0 or below 20% of the 7-day median), <code>slow</code> (duration over 80% of <code>max_runtime</code> or 2× the 7-day p95). Flags are shown on the dashboard. <code>late</code> and <code>zero_output</code> also alert (amber).</p>
+  </div>
+
+  <div class="card">
+    <h2>Data model</h2>
+    <p>All tracking tables are written through a <strong>separate DB connection</strong> named <code>tracking</code> (same credentials as <code>mysql</code>, its own PDO). A job's <code>DB::rollBack()</code> can therefore never erase its own tracking row. <strong>All timestamps are written from PHP in Asia/Dhaka, never by MySQL defaults.</strong></p>
+    <div class="grid">
+      <div>
+        <h3>job_runs</h3>
+        <ul>
+          <li><code>id</code>, <code>run_uuid</code> (unique, also put in every log line's context)</li>
+          <li><code>job</code> (queue base name, e.g. <code>processTempData</code>), <code>job_class</code>, <code>queue</code></li>
+          <li><code>trigger_source</code> (scheduler / api / retry / catchup / manual), <code>triggered_by</code> (user id), <code>parent_run_id</code> (for retries)</li>
+          <li><code>payload</code> json, <code>status</code>, <code>flags</code> json, <code>attempt</code>, <code>max_attempts</code></li>
+          <li><code>queued_at</code>, <code>started_at</code>, <code>finished_at</code>, <code>wait_ms</code>, <code>duration_ms</code></li>
+          <li><code>worker_host</code>, <code>worker_pid</code></li>
+          <li><code>error_class</code>, <code>error_message</code>, <code>error_trace</code></li>
+          <li><code>tx_committed</code>, <code>tx_rolled_back</code>, <code>writes_kept</code>, <code>writes_undone</code>, <code>http_calls</code>, <code>http_failed</code></li>
+          <li><code>errors</code>, <code>warnings</code>, <code>log_lines</code>, <code>log_dropped</code>, <code>log</code> (gzipped json, MEDIUMBLOB)</li>
+          <li><code>metrics</code> json (e.g. <code>{"attendance": 512}</code>)</li>
+          <li>Indexes: <code>(job, started_at)</code>, <code>(status, started_at)</code>, <code>(queued_at)</code></li>
+        </ul>
+      </div>
+      <div>
+        <h3>job_schedules</h3>
+        <ul>
+          <li><code>job</code> (PK), <code>queue</code>, <code>cron</code>, <code>timezone</code></li>
+          <li><code>grace_minutes</code>, <code>max_runtime_s</code>, <code>max_wait_s</code></li>
+          <li><code>expect_metric</code> (metric key to watch for zero output, nullable)</li>
+          <li><code>enabled</code>, <code>source</code> (scheduler registry / manual), <code>synced_at</code></li>
+          <li><code>last_expected_at</code>, <code>last_checked_at</code></li>
+        </ul>
+        <p class="muted">Also holds the on-demand jobs (no cron) so they get <code>max_runtime</code> and <code>max_wait</code>.</p>
+        <h3>job_alerts</h3>
+        <ul>
+          <li><code>job</code>, <code>kind</code> (status or flag), <code>first_run_id</code>, <code>last_run_id</code></li>
+          <li><code>opened_at</code>, <code>last_sent_at</code>, <code>occurrences</code>, <code>resolved_at</code></li>
+        </ul>
+        <h3>heartbeats</h3>
+        <ul>
+          <li><code>name</code> (PK: <code>watchdog</code>, <code>worker</code>, <code>trigger_consumer</code>, <code>scheduler</code>), <code>beat_at</code>, <code>info</code> json</li>
+        </ul>
+        <h3>failed_jobs</h3>
+        <ul><li>Laravel standard table (<code>php artisan queue:failed-table</code>), driver <code>database-uuids</code></li></ul>
+      </div>
+    </div>
+  </div>
+
+  <h2>Phases</h2>
+
+  <div class="week urgent">
+    <h3>Phase 0 — Stop the bleeding <span class="badge b-red">today</span><span class="badge">0.5 day</span></h3>
+    <ol class="checklist">
+      <li>Resolve the merge markers in <code>task-scheduler/app/main.py</code> (lines 255–258). Confirm the container stays up and the startup log prints "Scheduler started".</li>
+      <li>For each date-based job, check whether it catches up on its own (queries <code>date &lt;= today</code>) or loses missed days (<code>date = today</code>): <code>employeeDeactivation</code>, <code>activatePfPolicy</code>, <code>employeeTransferApply</code>, <code>confirmProvisionalEmployees</code>, <code>syncRosterAssignments</code>, <code>processTempData</code> (yesterday + today only). Re-run the missed dates by hand where needed.</li>
+      <li><code>Dockerfile</code>: add <code>pcntl</code> to <code>docker-php-ext-install</code>. Rebuild.</li>
+      <li><code>start-worker.sh</code>: <code>HR_BG_WORKER_TRIES</code> 100 → 3, add <code>--backoff=30,120,600</code>. Raise <code>--timeout</code> to the longest job's limit and set per-job <code>public $timeout</code> on the heavy ones (<code>ProcessTempSalaryJob</code>, <code>ProcessRealSalaryJob</code>, <code>CacheRegenerateJob</code>).</li>
+      <li><code>.env</code>: <code>QUEUE_FAILED_DRIVER=database-uuids</code>. Create the <code>failed_jobs</code> migration and run it.</li>
+      <li>Remove the token from the log line at <code>CreateDeviceUserByEmpCode.php:32</code>.</li>
+      <li>Decide on <code>legacySync_trigger_queue</code>: add a consumer, or stop publishing it from the scheduler.</li>
+    </ol>
+    <p><strong>Done when:</strong> scheduler is up; a job that throws lands in <code>php artisan queue:failed</code> after 3 attempts; <code>php -m</code> lists <code>pcntl</code>.</p>
+  </div>
+
+  <div class="week">
+    <h3>Phase 1 — Run ledger <span class="badge">2 days</span></h3>
+    <ol class="checklist">
+      <li><code>config/database.php</code>: add a <code>tracking</code> connection (copy of <code>mysql</code>).</li>
+      <li>Migrations: <code>job_runs</code>, <code>job_schedules</code>, <code>job_alerts</code>, <code>heartbeats</code>.</li>
+      <li><code>app/Support/RunTracker.php</code>: holds the current run's state.
+        <ul>
+          <li>Counts transactions and writes using a stack (handles nested savepoints and <code>rollBack($toLevel)</code>).</li>
+          <li>Buffers log lines: collapses consecutive repeats; keeps the first and last 2,500 lines; redacts password, token, secret and authorization keys and JWT-looking strings; truncates context to 4 KB.</li>
+          <li>Flushes to the DB on every error line and every 30 s, so a hard kill loses at most 30 s of info lines.</li>
+          <li>Decides the final status (see status model).</li>
+          <li>On a clean success, keeps only warnings, errors and the first and last 25 other lines.</li>
+          <li>Rolls back any transaction a job left open, so it can't leak into the next job.</li>
+          <li><code>RunTracker::metric($key, $n)</code> for output counts.</li>
+        </ul></li>
+      <li><code>app/Providers/JobTrackingServiceProvider.php</code>, registered in <code>bootstrap/app.php</code>:
+        <ul>
+          <li><code>Queue::before</code> → row <code>running</code>, <code>RunTracker::start()</code>, <code>Log::shareContext(['run_id' =&gt; …])</code></li>
+          <li><code>Queue::after</code> → <code>RunTracker::finish(false)</code></li>
+          <li><code>Queue::exceptionOccurred</code> → record the attempt's error; if <code>writes_kept &gt; 0</code>, call <code>$job-&gt;fail()</code> to stop auto-retry</li>
+          <li><code>Queue::failing</code> → <code>RunTracker::finish(true)</code></li>
+          <li>DB events: <code>QueryExecuted</code>, <code>TransactionBeginning</code>, <code>TransactionCommitted</code>, <code>TransactionRolledBack</code> (ignore the <code>tracking</code> connection)</li>
+          <li><code>MessageLogged</code> → log tap</li>
+          <li>HTTP client events <code>ResponseReceived</code> / <code>ConnectionFailed</code> → <code>http_calls</code>, <code>http_failed</code> (ZKBio calls can't be rolled back, so they're at least counted)</li>
+          <li><code>register_shutdown_function</code> → if a run is open and <code>error_get_last()</code> is fatal, mark the run <code>lost</code> with the message</li>
+          <li><code>Queue::looping</code> → <code>heartbeats.worker</code></li>
+        </ul></li>
+      <li><code>RabbitMQJob</code> calls other jobs' <code>handle()</code> inline. Record the <strong>target queue</strong> as <code>job</code>, not <code>RabbitMQJob</code>, so runs are grouped correctly.</li>
+      <li><code>ConsumeTriggerQueues</code>:
+        <ul>
+          <li>Insert the <code>queued</code> row and carry its <code>run_uuid</code> into the dispatched job.</li>
+          <li>On bad JSON or a dispatch error, insert <code>trigger_failed</code> with the raw body (instead of silently dropping it), then ack.</li>
+          <li>Read <code>triggered_by</code> and <code>trigger_source</code> from the payload when present.</li>
+          <li>Write <code>heartbeats.trigger_consumer</code>.</li>
+        </ul></li>
+      <li><code>tests/RunTrackerTest.php</code>: status decision (all branches), nested savepoint rollback, <code>rollBack($toLevel)</code>, log trimming on success, redaction.</li>
+    </ol>
+    <p><strong>Done when:</strong> every scenario in the verification matrix rows 1–7 produces the expected row; tests pass.</p>
+  </div>
+
+  <div class="week">
+    <h3>Phase 2 — Watchdog <span class="badge">1.5 days</span></h3>
+    <ol class="checklist">
+      <li><code>app/Console/Commands/JobsWatchdog.php</code> (<code>jobs:watchdog</code>), run every 60 s from a third loop in <code>start-worker.sh</code>. Each check runs on its own, so one failing check doesn't stop the others.</li>
+      <li><strong>Missed:</strong> for each enabled schedule, compute the last expected fire time with <code>dragonmantank/cron-expression</code> (already in vendor) in Asia/Dhaka. If no run of that job has started since <code>expected + grace</code>, insert a <code>missed</code> row with the payload it would have sent (for "run now").</li>
+      <li><strong>Timed out / lost:</strong> <code>running</code> rows older than <code>max_runtime</code>. Mark <code>lost</code> if the worker heartbeat is stale, otherwise <code>timed_out</code>.</li>
+      <li><strong>Late:</strong> <code>queued</code> rows older than <code>max_wait</code> get the <code>late</code> flag.</li>
+      <li><strong>Stuck:</strong> RabbitMQ management API (<code>:15672/api/queues</code>): <code>messages &gt; 0</code> with <code>consumers = 0</code> for 10 min, or the oldest message older than N min. Covers <code>legacySync</code>-style orphans.</li>
+      <li><strong>Zero output / slow:</strong> compare the latest run's <code>metrics</code> and <code>duration_ms</code> with the 7-day median and p95.</li>
+      <li><strong>Schedule sync:</strong> <code>task-scheduler</code> publishes its job list (id, queue, cron, next_run_time) on startup to <code>schedulerRegistry_trigger_queue</code>. The existing naming convention resolves this to a new <code>SchedulerRegistryJob</code>, which updates <code>job_schedules</code>. There's then one source of truth for cron times: the <code>CRON_*</code> env vars.</li>
+      <li><strong>Cross-watch:</strong> the scheduler calls <code>GET /api/jobs/health</code> every 5 min. If the watchdog heartbeat is older than 3 min, or hr-bg doesn't answer, the scheduler posts the alert itself. The watchdog checks <code>heartbeats.scheduler</code> (written by the registry and health pings) the same way.</li>
+      <li><strong>Retention:</strong> null out <code>log</code> on success rows after 7 days, delete rows after 90 days, delete resolved alerts after 90 days.</li>
+    </ol>
+    <p><strong>Done when:</strong> verification matrix rows 8–13 behave as expected.</p>
+  </div>
+
+  <div class="week">
+    <h3>Phase 3 — Alerts <span class="badge">1 day</span></h3>
+    <ol class="checklist">
+      <li><code>app/Support/Alert.php</code>: one channel (default Slack incoming webhook, <code>JOB_ALERT_WEBHOOK_URL</code>), using the HTTP client already used by the jobs.</li>
+      <li>Dedupe by <code>(job, kind)</code> in <code>job_alerts</code>:
+        <ul>
+          <li>Send once when an alert opens, then at most one reminder per hour, with a count ("failing 37×").</li>
+          <li>Send one "resolved" message on the next <code>success</code>.</li>
+        </ul></li>
+      <li>Each message includes the job, status, reason (first error line), run link, attempt, duration, writes kept/undone, and "retry unsafe" when relevant.</li>
+      <li>Daily digest at 09:00: runs per status per job, open alerts, slowest jobs.</li>
+      <li>The scheduler's cross-watch alert uses the same webhook from Python.</li>
+    </ol>
+    <p><strong>Done when:</strong> a job that fails every minute sends 1 alert plus hourly reminders, and a single "resolved" message once it passes.</p>
+  </div>
+
+  <div class="week">
+    <h3>Phase 4 — API and dashboard <span class="badge">1.5 days</span></h3>
+    <ol class="checklist">
+      <li>Auth first: put <code>/api/jobs/*</code> behind the same auth the api-gateway uses (or an internal token header as a fallback). Retry, replay and run-now endpoints additionally require an admin role.</li>
+      <li>Endpoints:
+        <ul>
+          <li><code>GET /api/jobs/runs</code>: filter by job, status, flag, date range; paginated</li>
+          <li><code>GET /api/jobs/runs/{id}</code>: full row plus decompressed log, filterable by level</li>
+          <li><code>GET /api/jobs/summary</code>: per job, last run, last success, 24h counts, open alerts</li>
+          <li><code>GET /api/jobs/health</code>: heartbeat ages (used by the cross-watch)</li>
+          <li><code>POST /api/jobs/runs/{id}/retry</code>: re-dispatches the payload with <code>parent_run_id</code>; refuses <code>failed_retry_unsafe</code> unless <code>force=1</code>, and the force is logged with the user</li>
+          <li><code>POST /api/jobs/runs/{id}/replay</code>: for <code>trigger_failed</code></li>
+          <li><code>POST /api/jobs/missed/{id}/run-now</code>: catch-up with <code>trigger_source=catchup</code></li>
+        </ul></li>
+      <li>Page: per-job health grid, problem-runs table, run detail with a log viewer that shows <code>tx</code> lines between log lines. Served by Lumen now; it can move to the React front end later because it only calls the API.</li>
+    </ol>
+    <p><strong>Done when:</strong> without auth every endpoint returns 401; with auth you can find any run from the last 90 days and retry it.</p>
+  </div>
+
+  <div class="week">
+    <h3>Phase 5 — Coverage polish <span class="badge">1 day</span></h3>
+    <ol class="checklist">
+      <li>Add <code>RunTracker::metric()</code> to the jobs whose output matters: <code>ProcessTempDataJob</code> (attendance), <code>ProcessTempSalaryJob</code> / <code>ProcessRealSalaryJob</code> (employees), <code>SendBulkSMS*</code> (sent/failed), <code>EmployeeTransferApplyJob</code> (applied). Set <code>expect_metric</code> on their schedules.</li>
+      <li>hr-admin-backend: pass <code>triggered_by</code> (user id) and <code>trigger_source=api</code> in payloads sent to <code>publish-rabbitmq</code>.</li>
+      <li>Fill <code>max_runtime_s</code> and <code>max_wait_s</code> for the 9 on-demand queues, using the first week of real durations.</li>
+      <li>Review the <code>completed_with_errors</code> rows from the first week. Change catch blocks that hide real failures to rethrow, starting with the salary and attendance jobs.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Verification matrix</h2>
+    <table>
+      <tr><th>#</th><th>Scenario</th><th>How to cause it</th><th>Expected</th></tr>
+      <tr><td>1</td><td>Clean run</td><td>Publish a normal <code>processTempData</code> trigger</td><td><code>success</code>, duration set, log trimmed, metric stored</td></tr>
+      <tr><td>2</td><td>Exception</td><td>Payload that makes <code>ConfirmProvisionalEmployeesJob</code> throw</td><td>3 attempts at 30s/2m, then <code>failed</code>, row in <code>failed_jobs</code>, 1 alert</td></tr>
+      <tr><td>3</td><td>Swallowed error</td><td>Force the bulk insert in <code>ProcessManualDataJob</code> to hit a duplicate key</td><td><code>rolled_back</code> (worker would say success), error lines kept</td></tr>
+      <tr><td>4</td><td>Partial</td><td>3 transfers due, one employee without official info</td><td><code>partial</code>, tx 2 committed / 1 rolled back</td></tr>
+      <tr><td>5</td><td>Throw after commit</td><td>Make <code>ProcessSandwichedHolidaysJob</code> throw after the first employee</td><td><code>failed_retry_unsafe</code>, no auto-retry</td></tr>
+      <tr><td>6</td><td>Bad trigger</td><td>Publish <code>not json</code> to any <code>*_trigger_queue</code></td><td><code>trigger_failed</code> with the raw body; consumer keeps running</td></tr>
+      <tr><td>7</td><td>Fatal</td><td>Test job that allocates past 512M</td><td><code>lost</code> with the "Allowed memory size" message</td></tr>
+      <tr><td>8</td><td>Hung</td><td>Test job that sleeps past its timeout</td><td><code>timed_out</code>, and the worker moves on to the next job</td></tr>
+      <tr><td>9</td><td>Worker killed</td><td><code>kill -9</code> the <code>queue:work</code> PID mid-run</td><td><code>lost</code> within <code>max_runtime</code> + 1 min</td></tr>
+      <tr><td>10</td><td>Missed</td><td>Stop <code>task-scheduler</code> over a due time</td><td><code>missed</code> after grace, red alert, "run now" works</td></tr>
+      <tr><td>11</td><td>Stuck</td><td>Publish to a queue with no consumer</td><td><code>stuck</code> after 10 min, amber alert</td></tr>
+      <tr><td>12</td><td>Late</td><td>Queue an attendance trigger behind a long salary run</td><td><code>late</code> flag with <code>wait_ms</code></td></tr>
+      <tr><td>13</td><td>Container down</td><td>Stop <code>hr-bg-service</code></td><td>Scheduler's cross-watch alerts within 5–8 min</td></tr>
+      <tr><td>14</td><td>Alert storm</td><td>Break <code>confirmProvisionalEmployees</code> (runs every minute) for 1 hour</td><td>1 alert + 1 reminder, then 1 "resolved"</td></tr>
+      <tr><td>15</td><td>Rollback can't erase tracking</td><td>Any of rows 3–5</td><td>Tracking row survives with the right counts</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Open decisions (defaults used if not answered)</h2>
+    <table>
+      <tr><th>Decision</th><th>Default</th><th>Alternatives</th></tr>
+      <tr><td>Alert channel</td><td>Slack incoming webhook</td><td>Email, SMS through <code>SendBulkSMSJob</code>, notification-backend</td></tr>
+      <tr><td>Dashboard auth</td><td>Gateway JWT, admin role for actions</td><td>Internal token header</td></tr>
+      <tr><td>Retry policy</td><td>3 tries, backoff 30s / 2m / 10m</td><td>Per-job <code>$tries</code></td></tr>
+      <tr><td>Retention</td><td>Success logs 7 days, rows 90 days</td><td>Longer for salary jobs</td></tr>
+      <tr><td>RabbitMQ management access</td><td>Read-only user for the watchdog</td><td>Reuse the <code>mbw</code> user</td></tr>
+      <tr><td><code>legacySync_trigger_queue</code></td><td>Stop publishing until a consumer exists</td><td>Build the consumer</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Known limits</h2>
+    <ul>
+      <li>Soft failures are caught only when the job logs at error level. A job that bails out with <code>Log::warning</code> or returns silently still counts as success; the <code>zero_output</code> check is the safety net there.</li>
+      <li>Write counts are SQL statements, not rows (a 500-row bulk insert counts as 1). <code>QueryExecuted</code> doesn't expose affected rows.</li>
+      <li>HTTP side effects (ZKBio, SMS) are counted, but can't be rolled back.</li>
+      <li>If MySQL is down, nothing can be written to the tracking tables; the daily log file (with <code>run_id</code>) is the fallback. If both containers are down, only an external uptime monitor would notice.</li>
+      <li>One worker process means one job at a time. Tracking makes the delay visible but doesn't remove it. Splitting heavy queues onto a second worker is a separate decision.</li>
+    </ul>
+  </div>
+</body>
+</html>
