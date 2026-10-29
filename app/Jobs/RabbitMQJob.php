@@ -47,6 +47,12 @@ class RabbitMQJob extends Job implements ShouldQueue
     {
         $message = is_string($this->data) ? $this->data : json_encode($this->data);
 
+        // outside the try below: a failed old ERP call must reach the worker so it retries
+        if ($this->queueName === 'oldErpLoanSync_queue') {
+            (new OldErpLoanSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
+
         try {
             Log::info('RabbitMQJob received message', ['message' => $message]);
             $queueConnection = app('queue')->connection('rabbitmq');
