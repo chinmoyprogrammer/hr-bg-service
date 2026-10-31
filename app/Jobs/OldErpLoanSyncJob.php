@@ -110,9 +110,7 @@ class OldErpLoanSyncJob extends Job
             return;
         }
 
-        if (!$this->syncPayments($loan, $ext)) {
-            return;
-        }
+        $this->syncPayments($loan, $ext, $old['loan_no'] ?? null);
 
         if (!in_array($loan->status, self::TERMINAL, true)) {
             $this->syncPauses($loan, $ext, $old);
@@ -152,8 +150,12 @@ class OldErpLoanSyncJob extends Job
         return $body;
     }
 
-    /** Direct payments (incl. cash paid with a pause request) -> receive + approve, oldest first. */
-    private function syncPayments(object $loan, string $loanExt): bool
+    /**
+     * Direct payments (incl. cash paid with a pause request) -> receive + approve, oldest first.
+     * A payment the old ERP refuses (e.g. dated in a paused month) is logged and skipped, so it
+     * never blocks the payments, pauses and stop after it; it is tried again on every later sync.
+     */
+    private function syncPayments(object $loan, string $loanExt, ?string $loanNo): void
     {
         $rows = DB::table('payroll_salary_loan_advance_n_other_installments')
             ->where('payroll_salary_advance_n_loan_id', $loan->id)
@@ -179,23 +181,22 @@ class OldErpLoanSyncJob extends Job
                     'details'          => $row->reference_no ? 'Ref ' . $row->reference_no : null,
                 ]);
                 if ($rec === null) {
-                    return false;
+                    continue;
                 }
                 $rec += ['status' => 'pending'];
             } elseif (round((float) ($rec['received_amount'] ?? 0), 2) !== round((float) $row->amount, 2)
-                || (isset($rec['loan_no'], $old['loan_no']) && $rec['loan_no'] !== $old['loan_no'])) {
-                $this->log('error', "{$ext} in the old ERP is a different payment ({$rec['loan_no']} {$rec['received_amount']}) -- nothing sent");
-                return false;
+                || ($loanNo !== null && ($rec['loan_no'] ?? null) !== $loanNo)) {
+                $this->log('error', "{$ext} in the old ERP is a different payment (" . ($rec['loan_no'] ?? '?') . ' ' . ($rec['received_amount'] ?? '?') . ') -- nothing sent');
+                continue;
             }
 
-            if ($this->oldStatus($rec) === 'pending' && $this->post('approve', ['external_id' => $ext], [
-                'action_by_emp_id' => (int) $row->created_user_id,
-                'approved_at'      => $date,
-            ]) === null) {
-                return false;
+            if ($this->oldStatus($rec) === 'pending') {
+                $this->post('approve', ['external_id' => $ext], [
+                    'action_by_emp_id' => (int) $row->created_user_id,
+                    'approved_at'      => $date,
+                ]);
             }
         }
-        return true;
     }
 
     /** Approved pause months; the old API replaces its whole list, so the full set is sent. */
@@ -299,9 +300,13 @@ class OldErpLoanSyncJob extends Job
         $url = rtrim(env('OLD_ERP_API_URL', 'http://30.30.28.73:8080/erp/erp/api'), '/')
             . '/apiLoans/' . $action . ($query ? '?' . http_build_query($query) : '');
 
-        // a ConnectionException propagates: the worker retries
         $request = Http::timeout(20)->acceptJson()->withHeaders(['X-API-KEY' => (string) env('OLD_ERP_API_KEY')]);
-        $response = $method === 'GET' ? $request->get($url) : $request->asJson()->post($url, $body);
+        try {
+            $response = $method === 'GET' ? $request->get($url) : $request->asJson()->post($url, $body);
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            $this->log('error', "{$action} failed, old ERP unreachable, will retry", ['error' => $e->getMessage()]);
+            throw $e;
+        }
 
         $context = [
             'action' => $action, 'query' => $query, 'body' => $body,
@@ -317,7 +322,9 @@ class OldErpLoanSyncJob extends Job
         if ($method === 'GET' && $response->status() === 404) {
             return null;
         }
-        if (in_array($response->status(), [404, 405, 422], true)) {
+        // a 4xx is the old ERP saying no (422 validation, 409 loan stopped / fully paid, ...): retrying
+        // won't change it; only a wrong key (401), a timeout (408), throttling (429) and 5xx are retried
+        if ($response->clientError() && !in_array($response->status(), [401, 408, 429], true)) {
             $this->log('error', "{$action} refused by old ERP", $context);
             return null;
         }
