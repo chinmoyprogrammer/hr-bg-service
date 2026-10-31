@@ -24,6 +24,9 @@ class RabbitMQJob extends Job implements ShouldQueue
     protected $data;
     protected $queueName;
 
+    // seconds; handle() can run ProcessTempSalaryJob inline, so match its limit
+    public $timeout = 600;
+
     /**
      * Create a new job instance.
      *
@@ -43,6 +46,12 @@ class RabbitMQJob extends Job implements ShouldQueue
     public function handle(): void
     {
         $message = is_string($this->data) ? $this->data : json_encode($this->data);
+
+        // outside the try below: a failed old ERP call must reach the worker so it retries
+        if ($this->queueName === 'oldErpLoanSync_queue') {
+            (new OldErpLoanSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
 
         try {
             Log::info('RabbitMQJob received message', ['message' => $message]);
