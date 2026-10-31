@@ -76,6 +76,10 @@ class OldErpLoanSyncJob extends Job
                 return;
             }
             $old = $created + ['status' => 'pending'];
+        } elseif ($diff = $this->identityMismatch($loan, $old)) {
+            // the new ERP id now names another loan (DB restored / copied) -- never touch someone else's record
+            $this->log('error', "{$ext} in the old ERP is a different loan ({$diff}) -- nothing sent", ['old_loan_no' => $old['loan_no'] ?? null]);
+            return;
         }
 
         $status = $this->oldStatus($old);
@@ -178,6 +182,10 @@ class OldErpLoanSyncJob extends Job
                     return false;
                 }
                 $rec += ['status' => 'pending'];
+            } elseif (round((float) ($rec['received_amount'] ?? 0), 2) !== round((float) $row->amount, 2)
+                || (isset($rec['loan_no'], $old['loan_no']) && $rec['loan_no'] !== $old['loan_no'])) {
+                $this->log('error', "{$ext} in the old ERP is a different payment ({$rec['loan_no']} {$rec['received_amount']}) -- nothing sent");
+                return false;
             }
 
             if ($this->oldStatus($rec) === 'pending' && $this->post('approve', ['external_id' => $ext], [
@@ -210,6 +218,22 @@ class OldErpLoanSyncJob extends Job
             'action_by_emp_id' => $this->actor(['paused']),
             'months'           => $months,
         ]) !== null;
+    }
+
+    /** Why an old record found by external_id is not this loan ('' = it is). */
+    private function identityMismatch(object $loan, array $old): string
+    {
+        $diff = [];
+        if ((string) ($old['employee_id'] ?? '') !== (string) $loan->employee_user_id) {
+            $diff[] = 'employee ' . ($old['employee_id'] ?? '?') . " vs {$loan->employee_user_id}";
+        }
+        if ((int) ($old['adv_pay_type'] ?? 0) !== self::TYPES[$loan->type]) {
+            $diff[] = 'type ' . ($old['adv_pay_type'] ?? '?') . ' vs ' . self::TYPES[$loan->type];
+        }
+        if (round((float) ($old['amount'] ?? 0), 2) !== round((float) $loan->amount, 2)) {
+            $diff[] = 'amount ' . ($old['amount'] ?? '?') . " vs {$loan->amount}";
+        }
+        return implode(', ', $diff);
     }
 
     private function effectiveMonth(object $loan): string
