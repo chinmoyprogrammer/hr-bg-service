@@ -56,6 +56,10 @@ class RabbitMQJob extends Job implements ShouldQueue
             (new OldErpLateConsiderSyncJob(is_array($this->data) ? $this->data : []))->handle();
             return;
         }
+        if ($this->queueName === 'oldErpAttendanceSync_queue') {
+            (new OldErpAttendanceSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
 
         try {
             Log::info('RabbitMQJob received message', ['message' => $message]);

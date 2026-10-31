@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\OldErpAttendanceSyncJob;
 use App\Jobs\OldErpLateConsiderSyncJob;
 use App\Jobs\OldErpLoanSyncJob;
 use Illuminate\Console\Command;
@@ -18,7 +19,7 @@ class OldErpResync extends Command
 {
     protected $signature = 'old-erp:resync {--days=7 : records changed in the last N days}';
 
-    protected $description = 'Re-sync recently changed loans and late consider requests to the old ERP.';
+    protected $description = 'Re-sync recently changed loans, late consider requests and manual attendance to the old ERP.';
 
     public function handle(): int
     {
@@ -40,6 +41,14 @@ class OldErpResync extends Command
             ->where(fn ($q) => $q->where('updated_at', '>=', $since)->orWhere('deleted_at', '>=', $since))
             ->pluck('id');
 
+        // attendance: manual entries / approved corrections written lately (CSV import excluded by manualRows)
+        $attFrom = substr((string) env('OLD_ERP_ATTENDANCE_SYNC_FROM'), 0, 7);
+        $attendance = !$attFrom ? collect() : OldErpAttendanceSyncJob::manualRows()
+            ->where('m.created_at', '>=', $since)
+            ->where('ea.date', '>=', $attFrom . '-01')
+            ->get()
+            ->unique(fn ($r) => $r->employee_user_id . '|' . $r->date);
+
         $failed = 0;
         foreach ($loanIds as $id) {
             $failed += $this->syncOne(fn () => (new OldErpLoanSyncJob(['loan_id' => $id]))->handle(), "loan {$id}");
@@ -48,7 +57,13 @@ class OldErpResync extends Command
             $failed += $this->syncOne(fn () => (new OldErpLateConsiderSyncJob(['late_consider_id' => $id]))->handle(), "late consider {$id}");
         }
 
-        $this->info('old-erp:resync ' . count($loanIds) . ' loans, ' . count($lateIds) . " late consider, {$failed} failed (see the sync logs)");
+        foreach ($attendance as $r) {
+            $failed += $this->syncOne(fn () => (new OldErpAttendanceSyncJob(['employee_user_id' => $r->employee_user_id, 'date' => $r->date]))->handle(),
+                "attendance {$r->employee_user_id} {$r->date}");
+        }
+
+        $this->info('old-erp:resync ' . count($loanIds) . ' loans, ' . count($lateIds) . ' late consider, ' . count($attendance)
+            . " attendance, {$failed} failed (see the sync logs)");
         return $failed ? 1 : 0;
     }
 
