@@ -30,22 +30,32 @@ if [ "$TRIGGER_ENABLED" = "1" ] || [ "$TRIGGER_ENABLED" = "true" ]; then
   ) &
 fi
 
-# Old ERP loan sync calls a remote server: its own loop, so a slow or down old ERP
+# Old ERP loan + late consider sync call a remote server: its own loop, so a slow or down old ERP
 # never delays the jobs above. 5 tries over ~42 min, then failed_jobs (queue:retry).
 OLD_ERP_SYNC_ENABLED="${HR_BG_OLD_ERP_SYNC_ENABLED:-1}"
 if [ "$OLD_ERP_SYNC_ENABLED" = "1" ] || [ "$OLD_ERP_SYNC_ENABLED" = "true" ]; then
   (
     while true; do
-      echo "[old-erp-sync] starting: queue=oldErpLoanSync_queue"
+      echo "[old-erp-sync] starting: queue=oldErpLoanSync_queue,oldErpLateConsiderSync_queue"
       set +e
       php -d opcache.enable_cli=0 artisan queue:work rabbitmq \
-        --queue=oldErpLoanSync_queue \
+        --queue=oldErpLoanSync_queue,oldErpLateConsiderSync_queue \
         --sleep=1 --tries=5 --backoff=30,120,600,1800 --timeout=120 --max-jobs=100 \
         --no-interaction -vvv
       EXIT_CODE=$?
       set -e
       echo "[old-erp-sync] exited code=$EXIT_CODE; restarting in 2s..."
       sleep 2
+    done
+  ) &
+  # Catch-up for missed messages (worker down, retries used up): re-syncs records changed in the
+  # last 7 days. ponytail: can race the worker on the same record -> one refused, logged POST; next run fixes it.
+  (
+    while true; do
+      set +e
+      php -d opcache.enable_cli=0 artisan old-erp:resync --days="${HR_BG_OLD_ERP_RESYNC_DAYS:-7}" --no-interaction
+      set -e
+      sleep "${HR_BG_OLD_ERP_RESYNC_EVERY:-86400}"
     done
   ) &
 fi
