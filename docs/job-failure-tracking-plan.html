@@ -63,7 +63,7 @@
     <p>One final status per run, plus flags that can stack on any status.</p>
     <table>
       <tr><th>Status</th><th>Meaning</th><th>Written by</th><th>Alert</th></tr>
-      <tr><td><span class="badge b-gray">queued</span> / <span class="badge b-gray">running</span></td><td>In flight</td><td>Trigger consumer / <code>Queue::before</code></td><td>—</td></tr>
+      <tr><td><span class="badge b-gray">queued</span> / <span class="badge b-gray">running</span></td><td>In flight. <span class="badge b-gray">retrying</span>: an attempt threw and the job is waiting for its backoff.</td><td>Trigger consumer / <code>Queue::before</code> / <code>Queue::exceptionOccurred</code></td><td>—</td></tr>
       <tr><td><span class="badge b-green">success</span></td><td>Finished, no error logged, nothing rolled back</td><td><code>Queue::after</code></td><td>Sends "resolved" if an alert was open</td></tr>
       <tr><td><span class="badge b-amber">completed_with_errors</span></td><td>Returned normally, but logged at error level</td><td><code>Queue::after</code> + log tap</td><td>Amber, deduped</td></tr>
       <tr><td><span class="badge b-amber">partial</span></td><td>Some transactions committed, some rolled back</td><td><code>Queue::after</code> + DB tx events</td><td>Amber, deduped</td></tr>
@@ -153,6 +153,7 @@
           <li>Decides the final status (see status model).</li>
           <li>On a clean success, keeps only warnings, errors and the first and last 25 other lines.</li>
           <li>Rolls back any transaction a job left open, so it can't leak into the next job.</li>
+          <li>Crash loop guard: a worker killed mid-job (OOM, timeout SIGKILL) never releases the message, so RabbitMQ redelivers it with the same attempt count forever. After <code>max_attempts</code> crashes in a row the job is failed into <code>failed_jobs</code> without running.</li>
           <li><code>RunTracker::metric($key, $n)</code> for output counts.</li>
         </ul></li>
       <li><code>app/Providers/JobTrackingServiceProvider.php</code>, registered in <code>bootstrap/app.php</code>:
