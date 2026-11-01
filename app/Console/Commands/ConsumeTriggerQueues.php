@@ -53,6 +53,8 @@ class ConsumeTriggerQueues extends Command
                 false,
                 function ($msg) use ($queueName) {
                     $runUuid = (string) \Illuminate\Support\Str::uuid();
+                    // Publish time (set by task-scheduler), so a trigger consumed late still counts for its slot
+                    $queuedAt = $msg->has('timestamp') ? RunTracker::now(false, (float) $msg->get('timestamp')) : RunTracker::now();
                     $body = $msg->getBody();
                     try {
                         $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
@@ -63,14 +65,14 @@ class ConsumeTriggerQueues extends Command
                             'body' => $body,
                             'error' => $e->getMessage(),
                         ]);
-                        $this->recordTriggerFailed($runUuid, $queueName, ['raw' => RunTracker::cut($body, 65535)], $e);
+                        $this->recordTriggerFailed($runUuid, $queueName, ['raw' => RunTracker::cut($body, 65535)], $e, $queuedAt);
                         $msg->ack();
                         return;
                     }
                     Log::info('Consuming trigger message from queue final: ' . $queueName);
                     $payload = is_array($payload) ? $payload : [];
                     try {
-                        $this->dispatchFromTriggerQueue($queueName, $payload, $runUuid);
+                        $this->dispatchFromTriggerQueue($queueName, $payload, $runUuid, $queuedAt);
                     } catch (\Throwable $e) {
                         Log::error('Trigger consumer failed', [
                             'queue' => $queueName,
@@ -78,7 +80,7 @@ class ConsumeTriggerQueues extends Command
                             'error' => $e->getMessage(),
                         ]);
                         // Acked, not dropped: body and error are kept in job_runs for replay
-                        $this->recordTriggerFailed($runUuid, $queueName, $payload, $e);
+                        $this->recordTriggerFailed($runUuid, $queueName, $payload, $e, $queuedAt);
                     }
                     $msg->ack();
                 }
@@ -102,7 +104,7 @@ class ConsumeTriggerQueues extends Command
         return 0;
     }
 
-    private function dispatchFromTriggerQueue(string $queueName, array $payload, string $runUuid): void
+    private function dispatchFromTriggerQueue(string $queueName, array $payload, string $runUuid, string $queuedAt): void
     {
         Log::info('Consuming trigger message', ['queue' => $queueName, 'payload' => $payload]);
         $suffix = '_trigger_queue';
@@ -160,7 +162,7 @@ class ConsumeTriggerQueues extends Command
             'triggered_by' => is_numeric($payload['triggered_by'] ?? null) ? (int) $payload['triggered_by'] : null,
             'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
             'status' => 'queued',
-            'queued_at' => RunTracker::now(),
+            'queued_at' => $queuedAt,
         ]));
 
         // The payload hook copies this into the job, so the worker updates the row above
@@ -172,7 +174,7 @@ class ConsumeTriggerQueues extends Command
         }
     }
 
-    private function recordTriggerFailed(string $runUuid, string $queueName, array $payload, \Throwable $e): void
+    private function recordTriggerFailed(string $runUuid, string $queueName, array $payload, \Throwable $e, string $queuedAt): void
     {
         $now = RunTracker::now();
         RunTracker::write(fn ($db) => $db->table('job_runs')->updateOrInsert(['run_uuid' => $runUuid], [
@@ -181,7 +183,7 @@ class ConsumeTriggerQueues extends Command
             'trigger_source' => (string) ($payload['trigger_source'] ?? 'scheduler'),
             'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
             'status' => 'trigger_failed',
-            'queued_at' => $now,
+            'queued_at' => $queuedAt,
             'finished_at' => $now,
             'worker_host' => gethostname(),
             'worker_pid' => getmypid(),

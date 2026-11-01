@@ -289,11 +289,16 @@ class RunTracker
         return date($timeOnly ? 'H:i:s' : 'Y-m-d H:i:s', (int) $t) . sprintf('.%03d', ($t - floor($t)) * 1000);
     }
 
+    public static function db(): \Illuminate\Database\Connection
+    {
+        return DB::connection('tracking');
+    }
+
     /** Runs a tracking write; tracking must never break a job, so failures only go to stderr. */
     public static function write(callable $fn): mixed
     {
         try {
-            return $fn(DB::connection('tracking'));
+            return $fn(self::db());
         } catch (Throwable $e) {
             error_log('[job-tracking] ' . $e->getMessage());
             return null;

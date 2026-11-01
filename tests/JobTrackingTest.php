@@ -10,23 +10,17 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 
-// JobTrackingServiceProvider driven through the real queue Worker. `mysql` and `tracking` are two
-// separate in-memory sqlite DBs, so nothing touches the shared database.
+// JobTrackingServiceProvider driven through the real queue Worker, on sqlite (TrackingDatabase).
 class JobTrackingTest extends TestCase
 {
+    use TrackingDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();
         RunTracker::$current = null;
         TrackingTestHandler::$ran = false;
-
-        config(['logging.channels.discard' => ['driver' => 'monolog', 'handler' => \Monolog\Handler\NullHandler::class], 'logging.default' => 'discard']);
-        $this->app->configure('database');
-        $sqlite = ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''];
-        config(['database.connections.mysql' => $sqlite, 'database.connections.tracking' => $sqlite, 'database.default' => 'tracking']);
-        (require __DIR__ . '/../database/migrations/2026_11_01_100000_create_job_tracking_tables.php')->up();
-        config(['database.default' => 'mysql']);
-        DB::statement('create table probe (id integer primary key autoincrement, v integer)');
+        $this->useTrackingDatabase();
     }
 
     private function job(string $mode, array $extra = []): SyncJob

@@ -2,7 +2,7 @@
 set -e
 
 # Configurable via environment; sensible defaults provided
-QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,processManualData_queue,insertWeekendHolidays_queue,processTempSalary_queue,processRealSalary_queue,absentAdjustmentWithLeave_queue,sendBulkSMS_queue,sendBulkSMSToMultiUserOneSMS_queue,recalculateAttendance_queue,employeeDeactivation_queue,createDeviceUserByEmpCode_queue,confirmProvisionalEmployees_queue,recalculateSelectedAttendanceData_queue,syncRosterAssignments_queue,fiscalYearClosing_queue,cacheRegenerate_queue,processSandwichedHolidays_queue,activatePfPolicy_queue,employeeTransferApply_queue}"
+QUEUES="${HR_BG_WORKER_QUEUES:-processTempData_queue,processManualData_queue,insertWeekendHolidays_queue,processTempSalary_queue,processRealSalary_queue,absentAdjustmentWithLeave_queue,sendBulkSMS_queue,sendBulkSMSToMultiUserOneSMS_queue,recalculateAttendance_queue,employeeDeactivation_queue,createDeviceUserByEmpCode_queue,confirmProvisionalEmployees_queue,recalculateSelectedAttendanceData_queue,syncRosterAssignments_queue,fiscalYearClosing_queue,cacheRegenerate_queue,processSandwichedHolidays_queue,activatePfPolicy_queue,employeeTransferApply_queue,schedulerRegistry_queue}"
 SLEEP="${HR_BG_WORKER_SLEEP:-1}"
 TRIES="${HR_BG_WORKER_TRIES:-3}"
 # Seconds to wait before attempt 2, 3, ...
@@ -12,7 +12,7 @@ TIMEOUT="${HR_BG_WORKER_TIMEOUT:-300}"
 MAX_JOBS="${HR_BG_WORKER_MAX_JOBS:-100}"
 STOP_WHEN_EMPTY="${HR_BG_WORKER_STOP_WHEN_EMPTY:-0}"
 TRIGGER_ENABLED="${HR_BG_TRIGGER_ENABLED:-1}"
-TRIGGER_QUEUES="${HR_BG_TRIGGER_QUEUES:-processTempData_trigger_queue,employeeDeactivation_trigger_queue,insertWeekendHolidays_trigger_queue,confirmProvisionalEmployees_trigger_queue,syncRosterAssignments_trigger_queue,fiscalYearClosing_trigger_queue,cacheRegenerate_trigger_queue,processSandwichedHolidays_trigger_queue,activatePfPolicy_trigger_queue,employeeTransferApply_trigger_queue}"
+TRIGGER_QUEUES="${HR_BG_TRIGGER_QUEUES:-processTempData_trigger_queue,employeeDeactivation_trigger_queue,insertWeekendHolidays_trigger_queue,confirmProvisionalEmployees_trigger_queue,syncRosterAssignments_trigger_queue,fiscalYearClosing_trigger_queue,cacheRegenerate_trigger_queue,processSandwichedHolidays_trigger_queue,activatePfPolicy_trigger_queue,employeeTransferApply_trigger_queue,schedulerRegistry_trigger_queue}"
 
 cd /var/www/html
 
@@ -56,6 +56,19 @@ if [ "$OLD_ERP_SYNC_ENABLED" = "1" ] || [ "$OLD_ERP_SYNC_ENABLED" = "true" ]; th
       php -d opcache.enable_cli=0 artisan old-erp:resync --days="${HR_BG_OLD_ERP_RESYNC_DAYS:-7}" --no-interaction
       set -e
       sleep "${HR_BG_OLD_ERP_RESYNC_EVERY:-86400}"
+    done
+  ) &
+fi
+
+# Job tracking watchdog: missed schedules, dead/overrunning runs, stuck queues, silent heartbeats
+WATCHDOG_ENABLED="${HR_BG_WATCHDOG_ENABLED:-1}"
+if [ "$WATCHDOG_ENABLED" = "1" ] || [ "$WATCHDOG_ENABLED" = "true" ]; then
+  (
+    while true; do
+      set +e
+      php -d opcache.enable_cli=0 artisan jobs:watchdog --no-interaction
+      set -e
+      sleep "${HR_BG_WATCHDOG_EVERY:-60}"
     done
   ) &
 fi

@@ -195,6 +195,7 @@
       <li><strong>Retention:</strong> null out <code>log</code> on success rows after 7 days, delete rows after 90 days, delete resolved alerts after 90 days.</li>
     </ol>
     <p><strong>Done when:</strong> verification matrix rows 8–13 behave as expected.</p>
+    <p><strong>As built:</strong> stuck = messages waiting and no deliveries for 10 min (RabbitMQ shows 0 consumers on every <code>queue:work</code> queue, since the worker polls). Lost/timed out use the worker PID in <code>/proc</code>, so a killed worker is found in about a minute. Missed checks every slot since the last check, and only runs from that slot count. Trigger rows use the publish time (AMQP timestamp) as <code>queued_at</code>, so a late consumer shows as <code>late</code>, not <code>missed</code>. Cross-watch polls every 60 s and raises after 2 misses (about 2 min). Alerts go to the scheduler log until Phase 3.</p>
   </div>
 
   <div class="week">

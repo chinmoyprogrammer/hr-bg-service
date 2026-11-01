@@ -21,6 +21,8 @@ $router->get('/api', function () use ($router) {
     return $router->app->version();
 });
 
+$router->get('/api/jobs/health', 'JobHealthController@health');
+
 $router->group(['prefix' => 'api'], function () use ($router) {
     $router->get('pull-raw-data-from-device-to-temp-table', 'AttendanceController@pullRawDataFromDeviceToTempTable');
     $router->post('publish-rabbitmq', 'RabbitMQController@publishMessage');

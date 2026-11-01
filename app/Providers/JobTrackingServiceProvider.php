@@ -116,7 +116,11 @@ class JobTrackingServiceProvider extends ServiceProvider
             $row['wait_ms'] = max(0, (int) round((microtime(true) - $payload['pushed_at']) * 1000));
         }
 
-        $existing = RunTracker::write(fn ($db) => $db->table('job_runs')->where('run_uuid', $uuid)->first(['id', 'status', 'error_message']));
+        $existing = RunTracker::write(fn ($db) => $db->table('job_runs')->where('run_uuid', $uuid)->first(['id', 'status', 'error_message', 'queued_at']));
+        if ($attempt === 1 && $existing?->status === 'queued' && $existing->queued_at) {
+            // Trigger rows: from the scheduler's publish, so time spent waiting for the consumer counts too
+            $row['wait_ms'] = max(0, (int) round((microtime(true) - strtotime($existing->queued_at)) * 1000));
+        }
         $parentId = null;
         $crashes = 0;
         if ($existing && $attempt === 1 && $existing->status !== 'queued') {
