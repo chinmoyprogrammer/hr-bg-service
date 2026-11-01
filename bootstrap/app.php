@@ -41,6 +41,7 @@ $app->register(App\Providers\AttendanceServiceProvider::class);
 // Enable queues and RabbitMQ queue driver
 $app->register(Illuminate\Queue\QueueServiceProvider::class);
 $app->register(VladimirYuldashev\LaravelQueueRabbitMQ\LaravelQueueRabbitMQServiceProvider::class);
+$app->register(App\Providers\JobTrackingServiceProvider::class);
 /*
 |--------------------------------------------------------------------------
 | Register Container Bindings
