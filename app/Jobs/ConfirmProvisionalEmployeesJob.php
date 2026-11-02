@@ -67,37 +67,25 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
         regenerateEmployeeCache();
     }
 
-    private function calculateAllowedLeaveDays($leavePolicyDetailDays, $joiningDate)
+    // same rule as hr-admin proratedLeaveDays(): remaining calendar days (start day included) / days in year * annual leave,
+    // fraction < .25 => down, .25 to < .75 => .5, >= .75 => up; start on or before 1 Jan => full year
+    private function calculateAllowedLeaveDays($leavePolicyDetailDays, $startDate)
     {
-        // Usage example
-        $businessDaysRemaining = $this->getDaysRemainingInBusinessYear($joiningDate);
-
-        if($businessDaysRemaining >= 365)
-        {
-            return $leavePolicyDetailDays;
+        $days = (float) $leavePolicyDetailDays;
+        $start = Carbon::parse($startDate)->startOfDay();
+        $yearStart = Carbon::create((int) date('Y'), 1, 1);
+        $yearEnd = $yearStart->copy()->endOfYear()->startOfDay();
+        if ($start->lte($yearStart)) {
+            return $days;
+        }
+        if ($start->gt($yearEnd)) {
+            return 0;
         }
 
-        $allowedDays = ($leavePolicyDetailDays*$businessDaysRemaining) / 365;
-        $fraction = $allowedDays - floor($allowedDays);
-    
-        if ($fraction < 0.25) {
-            $allowedDays = floor($allowedDays);
-        } elseif ($fraction >= 0.25 && $fraction <= 0.74) {
-            $allowedDays = floor($allowedDays) + 0.5;
-        } else {
-            $allowedDays = ceil($allowedDays);
-        }
-
-        return $allowedDays;
-    }
-
-    private function getDaysRemainingInBusinessYear($joiningDate) 
-    {
-        $currentTimestamp = strtotime($joiningDate);
-
-        $yearEndTimestamp = strtotime(date('Y-12-31'));
-        $interval = $yearEndTimestamp - $currentTimestamp;
-        return $interval / 86400;
+        $allowedDays = $days * ($start->diffInDays($yearEnd) + 1) / $yearStart->daysInYear;
+        $whole = floor($allowedDays);
+        $fraction = round($allowedDays - $whole, 6);
+        return $whole + ($fraction < 0.25 ? 0 : ($fraction < 0.75 ? 0.5 : 1));
     }
 
     private function assignLeaveBalanceToEmployee($employeeOfficialInfo)
@@ -129,7 +117,11 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
             }
             
             // for new Employee, calculate employee leave days comparing to their joining date , according to HR policy
-            $leaveDays = $this->calculateAllowedLeaveDays($leavePolicyDetail->days, $employeeOfficialInfo->joiningDate); // todo:: calculate according to formula // Done
+            // prorated from the day probation ends: joining_date + provisioner_days
+            $leaveDays = $this->calculateAllowedLeaveDays(
+                $leavePolicyDetail->days,
+                Carbon::parse($employeeOfficialInfo->joining_date)->addDays((int) $employeeOfficialInfo->provisioner_days)
+            );
 
             $encashment_basis_rate = $leavePolicyDetail->encashment_basis_rate ==0 ? 1 : $leavePolicyDetail->encashment_basis_rate/100;
             if($leavePolicyDetail->encashment_basis =='basic' )
