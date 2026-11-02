@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\Alert;
 use App\Support\RunTracker;
 use Cron\CronExpression;
 use DateTime;
@@ -16,8 +17,8 @@ use Throwable;
 /**
  * Finds what a job can't report about itself: due runs that never happened (missed), runs whose
  * worker died (lost) or overran (timed_out), queues nobody drains and silent heartbeats (stuck),
- * and late / slow / zero-output runs (flags). start-worker.sh runs it every 60 s.
- * See docs/job-failure-tracking-plan.html, Phase 2.
+ * and late / slow / zero-output runs (flags), then sends the alerts (App\Support\Alert).
+ * start-worker.sh runs it every 60 s. See docs/job-failure-tracking-plan.html, Phases 2-3.
  */
 class JobsWatchdog extends Command
 {
@@ -39,7 +40,8 @@ class JobsWatchdog extends Command
         $this->queues = null;  // per run; the command object can be reused
 
         // Each check on its own, so one failing (e.g. RabbitMQ API down) doesn't stop the others
-        foreach (['missed', 'stalled', 'late', 'orphans', 'stuckQueues', 'heartbeats', 'flags', 'retention'] as $check) {
+        // alerts after the checks that write rows and flags, so it sees this run's findings
+        foreach (['missed', 'stalled', 'late', 'orphans', 'stuckQueues', 'heartbeats', 'flags', 'alerts', 'digest', 'retention'] as $check) {
             try {
                 $this->{$check}();
             } catch (Throwable $e) {
@@ -200,13 +202,16 @@ class JobsWatchdog extends Command
             $key = self::STATE . 'queue:' . $name;
             $ready = (int) ($q['messages_ready'] ?? 0);
             $delivered = (int) ($q['message_stats']['deliver_get'] ?? 0);
+            $state = Cache::get($key);
+            $moving = $ready === 0 || ($state && $state['delivered'] !== $delivered);
+            if ($state && $moving && $state['run_id']) {
+                Alert::resolve(RunTracker::jobName($name), 'stuck');  // the episode is over
+            }
             if ($ready === 0) {
                 Cache::forget($key);
                 continue;
             }
-
-            $state = Cache::get($key);
-            if (!$state || $state['delivered'] !== $delivered) {
+            if (!$state || $moving) {
                 $state = ['since' => time(), 'delivered' => $delivered, 'run_id' => null];  // new or moving again
             }
             $for = time() - $state['since'];
@@ -235,7 +240,9 @@ class JobsWatchdog extends Command
             $busy = str_starts_with($beat->name, 'worker:') && ($info['host'] ?? null) === gethostname() && self::alive((int) ($info['pid'] ?? 0));
             $key = self::STATE . 'beat:' . $beat->name;
             if ($age <= $stale || $busy) {
-                Cache::forget($key);
+                if (Cache::pull($key)) {
+                    Alert::resolve('heartbeat:' . $beat->name, 'stuck');
+                }
                 continue;
             }
             Cache::put($key, $this->ongoing(Cache::get($key), [
@@ -278,6 +285,33 @@ class JobsWatchdog extends Command
             }
         }
         Cache::forever($cursorKey, $cursor);
+    }
+
+    /** Runs that ended (or were found) since the last check go through Alert. */
+    private function alerts(): void
+    {
+        Alert::retryUnsent();
+        $cursorKey = self::STATE . 'alerts_cursor';
+        $cursor = Cache::get($cursorKey) ?? RunTracker::now();  // first run: nothing from before
+        $runs = RunTracker::db()->table('job_runs')->where('finished_at', '>', $cursor)
+            ->whereNotIn('status', ['queued', 'running', 'retrying'])->orderBy('finished_at')->limit(1000)->get();
+        foreach ($runs as $run) {
+            Alert::run($run);
+            $cursor = $run->finished_at;
+        }
+        Cache::forever($cursorKey, $cursor);
+    }
+
+    /** Once a day at JOB_DIGEST_AT (default 09:00), or the first run after it. */
+    private function digest(): void
+    {
+        $key = self::STATE . 'digest:' . date('Y-m-d');
+        if (date('H:i') < env('JOB_DIGEST_AT', '09:00') || !Cache::add($key, 1, 2 * 86400)) {
+            return;
+        }
+        if (!Alert::send(Alert::digestText())) {
+            Cache::forget($key);  // webhook down: try again next run
+        }
     }
 
     /** Every 6 h: drop success logs after 7 days, rows and resolved alerts after 90. */

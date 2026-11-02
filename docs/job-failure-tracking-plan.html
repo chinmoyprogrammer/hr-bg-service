@@ -212,6 +212,7 @@
       <li>The scheduler's cross-watch alert uses the same webhook from Python.</li>
     </ol>
     <p><strong>Done when:</strong> a job that fails every minute sends 1 alert plus hourly reminders, and a single "resolved" message once it passes.</p>
+    <p><strong>As built:</strong> alerts are sent by <code>jobs:watchdog</code> (every minute), never from inside a job, so a slow webhook can't delay the worker. Settings: <code>JOB_ALERT_WEBHOOK_URL</code> (empty = log only), <code>JOB_ALERT_MUTE</code>, <code>JOB_DIGEST_AT</code>, <code>JOB_DASHBOARD_URL</code>. A failed send is retried on the next run; an alert that was never announced resolves silently. Flag alerts resolve on the next finished run without the flag; <code>stuck</code> resolves when the queue drains or the heartbeat returns. The scheduler's hr-bg-down alert also reminds hourly.</p>
   </div>
 
   <div class="week">
