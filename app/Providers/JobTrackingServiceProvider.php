@@ -106,6 +106,7 @@ class JobTrackingServiceProvider extends ServiceProvider
         $uuid = $payload['run_uuid'] ?? $payload['uuid'] ?? (string) Str::uuid();
         $input = self::input($payload);
         $now = RunTracker::now();
+        $queue = $job->getQueue() ?: $job->getConnectionName();  // sync jobs pushed without a queue
         $row = [
             'status' => 'running', 'attempt' => $attempt, 'started_at' => $now, 'finished_at' => null,
             'max_attempts' => $job->maxTries() ?? (int) (self::argv('tries') ?? 1),
@@ -115,7 +116,11 @@ class JobTrackingServiceProvider extends ServiceProvider
             $row['wait_ms'] = max(0, (int) round((microtime(true) - $payload['pushed_at']) * 1000));
         }
 
-        $existing = RunTracker::write(fn ($db) => $db->table('job_runs')->where('run_uuid', $uuid)->first(['id', 'status', 'error_message']));
+        $existing = RunTracker::write(fn ($db) => $db->table('job_runs')->where('run_uuid', $uuid)->first(['id', 'status', 'error_message', 'queued_at']));
+        if ($attempt === 1 && $existing?->status === 'queued' && $existing->queued_at) {
+            // Trigger rows: from the scheduler's publish, so time spent waiting for the consumer counts too
+            $row['wait_ms'] = max(0, (int) round((microtime(true) - strtotime($existing->queued_at)) * 1000));
+        }
         $parentId = null;
         $crashes = 0;
         if ($existing && $attempt === 1 && $existing->status !== 'queued') {
@@ -124,6 +129,7 @@ class JobTrackingServiceProvider extends ServiceProvider
             $existing = null;
             $uuid = (string) Str::uuid();
             $crashes = self::crashesInARow($parentId);
+            unset($row['wait_ms']);  // pushed_at is the original push, not this one
         }
 
         if ($existing) {
@@ -132,14 +138,14 @@ class JobTrackingServiceProvider extends ServiceProvider
         } else {
             $id = RunTracker::write(fn ($db) => $db->table('job_runs')->insertGetId($row + [
                 'run_uuid' => $uuid,
-                'job' => RunTracker::jobName($job->getQueue()),
+                'job' => RunTracker::jobName($queue),
                 'job_class' => $payload['displayName'] ?? null,
-                'queue' => $job->getQueue(),
+                'queue' => $queue,
                 'trigger_source' => $parentId ? 'retry' : (string) ($input['trigger_source'] ?? 'api'),
                 'triggered_by' => is_numeric($input['triggered_by'] ?? null) ? (int) $input['triggered_by'] : null,
                 'parent_run_id' => $parentId,
                 'payload' => self::json($input),
-                'queued_at' => isset($payload['pushed_at']) ? RunTracker::now(false, (float) $payload['pushed_at']) : null,
+                'queued_at' => !$parentId && isset($payload['pushed_at']) ? RunTracker::now(false, (float) $payload['pushed_at']) : null,
             ]));
         }
 
@@ -175,8 +181,9 @@ class JobTrackingServiceProvider extends ServiceProvider
 
     private function attemptFailed($job, Throwable $e): void
     {
-        if (!$this->owns($job)) {
-            return;  // last attempt: JobFailed already closed the run
+        // Last attempt: JobFailed already closed the run. Sync driver: it calls fail() right after this event.
+        if (!$this->owns($job) || $job->getConnectionName() === 'sync') {
+            return;
         }
         if (RunTracker::$current->counts['writes_kept'] > 0) {
             $job->fail($e);  // committed writes would be applied twice; JobFailed closes it as failed_retry_unsafe
@@ -204,7 +211,9 @@ class JobTrackingServiceProvider extends ServiceProvider
 
         RunTracker::$current = null;
         Log::flushSharedContext();
-        Log::withoutContext();
+        foreach (Log::getChannels() as $channel) {
+            $channel->withoutContext();  // shareContext() put run_id on every open channel, not just the default
+        }
 
         $columns = [
             'status' => $status ?? $tracker->status($e !== null, $e),

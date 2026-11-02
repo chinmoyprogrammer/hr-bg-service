@@ -43,8 +43,12 @@ return new class extends Migration {
             $table->index(['status', 'started_at'], 'idx_job_runs_status_started');
             $table->index('queued_at', 'idx_job_runs_queued');
         });
-        // gzipped JSON lines; Blueprint::binary() is only a 64 KB BLOB
-        DB::statement('ALTER TABLE job_runs ADD log MEDIUMBLOB NULL AFTER log_dropped');
+        // gzipped JSON lines; Blueprint::binary() is only a 64 KB BLOB on MySQL (sqlite: tests)
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::statement('ALTER TABLE job_runs ADD log MEDIUMBLOB NULL AFTER log_dropped');
+        } else {
+            Schema::table('job_runs', fn (Blueprint $table) => $table->binary('log')->nullable());
+        }
 
         Schema::create('job_schedules', function (Blueprint $table) {
             $table->string('job', 100)->primary();

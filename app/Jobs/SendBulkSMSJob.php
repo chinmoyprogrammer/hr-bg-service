@@ -17,6 +17,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use App\Support\RunTracker;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -47,6 +48,7 @@ class SendBulkSMSJob extends Job implements ShouldQueue
         //     ['countryCode' => '+880', 'receipentNos' => '1711234567890', 'smsBody' => 'Hello World!'],
         // ];
         //send sms to each receipent
+        $sent = $failed = 0;
         foreach ($this->payload as $item) {
             $countryCode = $item['countryCode'];
             $receipentNos = $item['receipentNos'];
@@ -54,6 +56,10 @@ class SendBulkSMSJob extends Job implements ShouldQueue
             //... sms api call to send sms
             $stat = sendSMS($countryCode, $receipentNos, $smsBody);
             Log::info('SendBulkSMSJob: send sms to receipent: [' . $receipentNos . '], status: [' . $stat . ']');
+            // ponytail: false = the HTTP call failed; what the gateway's reply body means isn't checked
+            $stat === false ? $failed++ : $sent++;
         }
+        RunTracker::metric('sent', $sent);
+        RunTracker::metric('failed', $failed);
     }
 }

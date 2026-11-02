@@ -3,6 +3,8 @@
 namespace App\Console;
 
 use App\Console\Commands\ConsumeTriggerQueues;
+use App\Console\Commands\JobsLimits;
+use App\Console\Commands\JobsWatchdog;
 use App\Console\Commands\OldErpResync;
 use Illuminate\Console\Scheduling\Schedule;
 use Laravel\Lumen\Console\Kernel as ConsoleKernel;
@@ -16,6 +18,8 @@ class Kernel extends ConsoleKernel
      */
     protected $commands = [
         ConsumeTriggerQueues::class,
+        JobsLimits::class,
+        JobsWatchdog::class,
         OldErpResync::class,
     ];
 

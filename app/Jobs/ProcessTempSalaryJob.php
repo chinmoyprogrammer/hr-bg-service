@@ -14,6 +14,7 @@ use App\Models\PayrollSalaryHead;
 use App\Models\PrProblemRegisterAccousedPerson;
 use App\Models\SalaryHead;
 use App\Models\User;
+use App\Support\RunTracker;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -695,6 +696,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     'created_at' => date('Y-m-d H:i:s'),
                 ];
             });
+        RunTracker::metric('employees', $PayrollSalarySheetTemp ? count($PayrollSalarySheetTemp) : 0);  // salary rows written
         if ($PayrollSalarySheetTemp && count($PayrollSalarySheetTemp) > 0) {
             DB::transaction(function () use (
                 $PayrollSalarySheetTemp,

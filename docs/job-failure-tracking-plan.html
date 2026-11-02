@@ -195,6 +195,7 @@
       <li><strong>Retention:</strong> null out <code>log</code> on success rows after 7 days, delete rows after 90 days, delete resolved alerts after 90 days.</li>
     </ol>
     <p><strong>Done when:</strong> verification matrix rows 8–13 behave as expected.</p>
+    <p><strong>As built:</strong> stuck = messages waiting and no deliveries for 10 min (RabbitMQ shows 0 consumers on every <code>queue:work</code> queue, since the worker polls). Lost/timed out use the worker PID in <code>/proc</code>, so a killed worker is found in about a minute. Missed checks every slot since the last check, and only runs from that slot count. Trigger rows use the publish time (AMQP timestamp) as <code>queued_at</code>, so a late consumer shows as <code>late</code>, not <code>missed</code>. Cross-watch polls every 60 s and raises after 2 misses (about 2 min). Alerts go to the scheduler log until Phase 3.</p>
   </div>
 
   <div class="week">
@@ -211,6 +212,7 @@
       <li>The scheduler's cross-watch alert uses the same webhook from Python.</li>
     </ol>
     <p><strong>Done when:</strong> a job that fails every minute sends 1 alert plus hourly reminders, and a single "resolved" message once it passes.</p>
+    <p><strong>As built:</strong> alerts are sent by <code>jobs:watchdog</code> (every minute), never from inside a job, so a slow webhook can't delay the worker. Settings: <code>JOB_ALERT_WEBHOOK_URL</code> (empty = log only), <code>JOB_ALERT_MUTE</code>, <code>JOB_DIGEST_AT</code>, <code>JOB_DASHBOARD_URL</code>. A failed send is retried on the next run; an alert that was never announced resolves silently. Flag alerts resolve on the next finished run without the flag; <code>stuck</code> resolves when the queue drains or the heartbeat returns. The scheduler's hr-bg-down alert also reminds hourly.</p>
   </div>
 
   <div class="week">
@@ -230,6 +232,7 @@
       <li>Page: per-job health grid, problem-runs table, run detail with a log viewer that shows <code>tx</code> lines between log lines. Served by Lumen now; it can move to the React front end later because it only calls the API.</li>
     </ol>
     <p><strong>Done when:</strong> without auth every endpoint returns 401; with auth you can find any run from the last 90 days and retry it.</p>
+    <p><strong>As built:</strong> the page is <code>/jobs-dashboard</code> on the gateway (an unauthenticated location serving a page with no data). Its script uses the ERP sign-in from the browser (<code>auth_tokens</code>) or a pasted token. hr-bg checks bearer tokens with the auth service itself (cached 30 s), so a forged <code>X-User-Id</code> inside the Docker network doesn't work. The ERP has no roles, so access comes from <code>JOBS_VIEWER_USER_IDS</code> / <code>JOBS_ADMIN_USER_IDS</code>, plus <code>JOBS_INTERNAL_TOKEN</code> for scripts. <code>/api/jobs/health</code> stays open so the cross-watch works while auth is down; it only returns heartbeat ages. Run-now rewrites <code>date</code>/<code>start_date</code>/<code>end_date</code>/<code>year</code>/<code>month</code> to the missed slot's date. A retry refuses truncated or redacted payloads. Transaction boundaries are stored as <code>tx</code> log lines. A rollback only sets <code>rolled_back</code>/<code>partial</code> when it undid writes.</p>
   </div>
 
   <div class="week">
@@ -240,6 +243,7 @@
       <li>Fill <code>max_runtime_s</code> and <code>max_wait_s</code> for the 9 on-demand queues, using the first week of real durations.</li>
       <li>Review the <code>completed_with_errors</code> rows from the first week. Change catch blocks that hide real failures to rethrow, starting with the salary and attendance jobs.</li>
     </ol>
+    <p><strong>As built:</strong> metrics: <code>processTempData</code> attendance, <code>processTempSalary</code> employees, both SMS jobs sent/failed (plus skipped), and <code>employeeTransferApply</code> applied/due. That last one has no <code>expect_metric</code>, because most days nothing is due. <code>processRealSalary</code> is an empty stub. <code>php artisan jobs:limits [--apply]</code> suggests limits from tracked durations, and with <code>--apply</code> writes them for the 12 on-demand jobs plus <code>expect_metric</code>. It was first run with about a day of data, so most limits are still the job timeout; <strong>re-run it after a week</strong>. hr-admin-backend's <code>RabbitMQJob</code> adds <code>triggered_by</code>/<code>trigger_source=api</code> to keyed payloads for <code>*_queue</code> queues; list payloads and notifications are left alone. Rethrown now: the bulk-insert catches in ProcessTempData, ProcessManualData, RecalculateAttendance and RecalculateSelectedAttendanceData, ProcessTempData's outer catch, and RabbitMQJob's catch (it swallowed failures of the jobs it runs inline). Per-item catches (transfers, old-ERP pushes) stay. The first-week review of <code>completed_with_errors</code> rows is still open, because none had happened yet. Found on the way: ProcessTempDataJob has no transaction (removed in <code>da1b3c3</code>), so a failed insert leaves the day's attendance deleted until the next hourly run. <code>absentAdjustmentWithLeave_queue</code> is still consumed, but its job class was deleted in <code>993f8c8</code>.</p>
   </div>
 
   <div class="card">

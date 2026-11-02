@@ -96,6 +96,9 @@ $app->configure('queue');
 // $app->routeMiddleware([
 //     'auth' => App\Http\Middleware\Authenticate::class,
 // ]);
+$app->routeMiddleware([
+    'jobs.auth' => App\Http\Middleware\JobsAuth::class,
+]);
 
 /*
 |--------------------------------------------------------------------------
