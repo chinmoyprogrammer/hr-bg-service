@@ -163,13 +163,16 @@ class RabbitMQJob extends Job implements ShouldQueue
                 ]);
             }
         } catch (\Throwable $e) {
-            Log::error('RabbitMQJob publish failed', [
+            Log::error('RabbitMQJob failed', [
                 'queue' => $this->queueName,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            // Covers the jobs run inline above (salary, attendance, ...) as well as the publish: the
+            // worker retries or fails the run instead of counting it as done
+            throw $e;
         }
     }
 }

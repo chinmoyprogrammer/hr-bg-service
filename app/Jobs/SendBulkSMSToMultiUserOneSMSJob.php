@@ -18,6 +18,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use App\Support\RunTracker;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -68,18 +69,24 @@ class SendBulkSMSToMultiUserOneSMSJob extends Job implements ShouldQueue
                                 })->toArray();
                                 
         
-        foreach ($usersInfo as $userId => $officialPhoneInfo) 
+        $sent = $failed = $skipped = 0;
+        foreach ($usersInfo as $userId => $officialPhoneInfo)
         {
             $countryCode = $officialPhoneInfo[0];
             $receipentNos = $officialPhoneInfo[1];
             if (!$receipentNos) {
                 Log::warning('SendBulkSMSJob: no official phone, sms skipped', ['user_id' => $userId]);
+                $skipped++;
                 continue;
             }
             //... sms api call to send sms
             $stat = sendSMS($countryCode, $receipentNos, $smsBody);
             Log::info('SendBulkSMSJob: send sms to receipent: [' . $receipentNos . '], status: [' . $stat . ']');
+            $stat === false ? $failed++ : $sent++;  // false = the HTTP call failed
         }
-        
+        RunTracker::metric('sent', $sent);
+        RunTracker::metric('failed', $failed);
+        RunTracker::metric('skipped', $skipped);
+
     }
 }

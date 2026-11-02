@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\RunTracker;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -88,6 +89,9 @@ class EmployeeTransferApplyJob extends Job implements ShouldQueue
         }
 
         Log::info("EmployeeTransferApplyJob: {$done} of {$transfers->count()} transfers applied for {$date}");
+        // No expect_metric for this one: most days nothing is due, so 0 is normal
+        RunTracker::metric('applied', $done);
+        RunTracker::metric('due', $transfers->count());
         if ($done) {
             regenerateEmployeeCache();
         }

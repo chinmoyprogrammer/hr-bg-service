@@ -237,7 +237,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
             } catch (\Throwable $e) {
                 DB::rollBack();
                 Log::error('RecalculateAttendanceJob bulk insert failed', ['error' => $e->getMessage()]);
-                return;
+                throw $e;  // the run fails (and alerts) instead of passing with no attendance written
             }
 
             // ── Resolve inserted IDs and back-fill attendance_id references ───────

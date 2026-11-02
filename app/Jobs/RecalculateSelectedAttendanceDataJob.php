@@ -286,8 +286,8 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
-            Log::error('ProcessManualDataJob bulk insert failed', ['error' => $e->getMessage()]);
-            return;
+            Log::error('RecalculateSelectedAttendanceDataJob bulk insert failed', ['error' => $e->getMessage()]);
+            throw $e;  // the run fails (and alerts) instead of passing with no attendance written
         }
 
         // ── Resolve inserted IDs ──────────────────────────────────────────────
