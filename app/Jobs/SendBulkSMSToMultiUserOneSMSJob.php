@@ -72,6 +72,10 @@ class SendBulkSMSToMultiUserOneSMSJob extends Job implements ShouldQueue
         {
             $countryCode = $officialPhoneInfo[0];
             $receipentNos = $officialPhoneInfo[1];
+            if (!$receipentNos) {
+                Log::warning('SendBulkSMSJob: no official phone, sms skipped', ['user_id' => $userId]);
+                continue;
+            }
             //... sms api call to send sms
             $stat = sendSMS($countryCode, $receipentNos, $smsBody);
             Log::info('SendBulkSMSJob: send sms to receipent: [' . $receipentNos . '], status: [' . $stat . ']');
