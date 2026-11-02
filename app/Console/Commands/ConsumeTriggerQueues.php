@@ -160,6 +160,8 @@ class ConsumeTriggerQueues extends Command
             'queue' => $targetQueue,
             'trigger_source' => (string) ($payload['trigger_source'] ?? 'scheduler'),
             'triggered_by' => is_numeric($payload['triggered_by'] ?? null) ? (int) $payload['triggered_by'] : null,
+            // set by the jobs API on replay / run-now
+            'parent_run_id' => is_numeric($payload['parent_run_id'] ?? null) ? (int) $payload['parent_run_id'] : null,
             'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
             'status' => 'queued',
             'queued_at' => $queuedAt,

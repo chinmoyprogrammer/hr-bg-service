@@ -39,6 +39,19 @@ class RunTrackerTest extends PlainTestCase
         $this->assertSame('failed_retry_unsafe', $t->status(true, new RuntimeException('x')));
     }
 
+    public function test_rolling_back_a_read_only_transaction_is_not_a_rollback_status(): void
+    {
+        $t = $this->tracker();
+        $t->begin('mysql');
+        $t->query('mysql', 'select * from a');
+        $t->rolledBack('mysql', 0);
+        $this->assertSame('success', $t->status(false));
+        $this->assertSame(1, $t->counts['tx_rolled_back']);
+
+        $t->log('error', 'gave up', []);
+        $this->assertSame('completed_with_errors', $t->status(false));
+    }
+
     public function test_reads_are_not_writes(): void
     {
         $t = $this->tracker();
@@ -65,6 +78,15 @@ class RunTrackerTest extends PlainTestCase
         $this->assertSame(2, $t->counts['writes_undone']);
         $this->assertSame(1, $t->counts['tx_committed']);
         $this->assertSame('partial', $t->status(false));
+
+        // The log shows the boundaries (level tx), without counting them as log lines
+        [$lines] = $t->lines(false);
+        $this->assertSame(
+            ['BEGIN', 'SAVEPOINT (level 2)', 'ROLLBACK TO level 1 (2 writes undone)', 'SAVEPOINT (level 2)', 'RELEASE SAVEPOINT (level 2, 1 writes)', 'COMMIT (2 writes)'],
+            array_column($lines, 'm')
+        );
+        $this->assertSame(['tx'], array_values(array_unique(array_column($lines, 'l'))));
+        $this->assertSame(0, $t->counts['log_lines']);
     }
 
     public function test_rollback_to_level_undoes_every_level_above(): void

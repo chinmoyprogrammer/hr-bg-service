@@ -62,6 +62,8 @@ class RunTracker
     public function begin(string $conn): void
     {
         $this->stacks[$conn][] = 0;
+        $depth = count($this->stacks[$conn]);
+        $this->tx($depth === 1 ? 'BEGIN' : "SAVEPOINT (level {$depth})", $conn);
     }
 
     public function query(string $conn, string $sql): void
@@ -86,8 +88,10 @@ class RunTracker
         if ($level === 0 || empty($this->stacks[$conn])) {
             $this->counts['writes_kept'] += $writes;
             $this->counts['tx_committed']++;
+            $this->tx("COMMIT ({$writes} writes)", $conn);
         } else {
             $this->stacks[$conn][array_key_last($this->stacks[$conn])] += $writes;  // savepoint folds into its parent
+            $this->tx('RELEASE SAVEPOINT (level ' . ($level + 1) . ", {$writes} writes)", $conn);
         }
     }
 
@@ -95,11 +99,14 @@ class RunTracker
     public function rolledBack(string $conn, int $level): void
     {
         $stack = $this->stacks[$conn] ?? [];
+        $undone = 0;
         while (count($stack) > $level) {
-            $this->counts['writes_undone'] += array_pop($stack);
+            $undone += array_pop($stack);
         }
+        $this->counts['writes_undone'] += $undone;
         $this->stacks[$conn] = $stack;
         $this->counts['tx_rolled_back']++;
+        $this->tx(($level === 0 ? 'ROLLBACK' : "ROLLBACK TO level {$level}") . " ({$undone} writes undone)", $conn);
     }
 
     /** Transactions still open at the end (connection lost, process dying): MySQL undoes them. */
@@ -140,8 +147,19 @@ class RunTracker
             $json = json_encode(self::redact($context), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
             $line['c'] = strlen($json) > self::FIELD_MAX ? self::cut($json) : json_decode($json, true);
         }
-        $key = $level . "\0" . $line['m'] . "\0" . json_encode($line['c'] ?? null);
+        $this->buffer($line, $level . "\0" . $line['m'] . "\0" . json_encode($line['c'] ?? null));
+        $this->maybeFlush($isError);
+    }
 
+    /** Transaction boundaries, level `tx`, so the log shows which lines a rollback undid. Not counted as log lines. */
+    private function tx(string $message, string $conn): void
+    {
+        $line = ['l' => 'tx', 'm' => $conn === 'mysql' ? $message : "{$message} [{$conn}]"];
+        $this->buffer($line, "tx\0" . $line['m']);
+    }
+
+    private function buffer(array $line, string $key): void
+    {
         if ($this->pending && $key === $this->pendingKey) {
             $this->pending['n'] = ($this->pending['n'] ?? 1) + 1;
         } else {
@@ -149,7 +167,6 @@ class RunTracker
             $this->pending = ['t' => self::now(true)] + $line;
             $this->pendingKey = $key;
         }
-        $this->maybeFlush($isError);
     }
 
     private function push(): void
@@ -204,7 +221,8 @@ class RunTracker
             // Writes already committed: a retry would apply them twice
             return $this->counts['writes_kept'] > 0 ? 'failed_retry_unsafe' : 'failed';
         }
-        if ($this->counts['tx_rolled_back'] > 0) {
+        // Only a rollback that undid writes counts; a read-only transaction rolled back undid nothing
+        if ($this->counts['writes_undone'] > 0) {
             return $this->counts['writes_kept'] > 0 ? 'partial' : 'rolled_back';
         }
 

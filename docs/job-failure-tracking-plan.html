@@ -232,6 +232,7 @@
       <li>Page: per-job health grid, problem-runs table, run detail with a log viewer that shows <code>tx</code> lines between log lines. Served by Lumen now; it can move to the React front end later because it only calls the API.</li>
     </ol>
     <p><strong>Done when:</strong> without auth every endpoint returns 401; with auth you can find any run from the last 90 days and retry it.</p>
+    <p><strong>As built:</strong> the page is <code>/jobs-dashboard</code> on the gateway (an unauthenticated location serving a page with no data). Its script uses the ERP sign-in from the browser (<code>auth_tokens</code>) or a pasted token. hr-bg checks bearer tokens with the auth service itself (cached 30 s), so a forged <code>X-User-Id</code> inside the Docker network doesn't work. The ERP has no roles, so access comes from <code>JOBS_VIEWER_USER_IDS</code> / <code>JOBS_ADMIN_USER_IDS</code>, plus <code>JOBS_INTERNAL_TOKEN</code> for scripts. <code>/api/jobs/health</code> stays open so the cross-watch works while auth is down; it only returns heartbeat ages. Run-now rewrites <code>date</code>/<code>start_date</code>/<code>end_date</code>/<code>year</code>/<code>month</code> to the missed slot's date. A retry refuses truncated or redacted payloads. Transaction boundaries are stored as <code>tx</code> log lines. A rollback only sets <code>rolled_back</code>/<code>partial</code> when it undid writes.</p>
   </div>
 
   <div class="week">
