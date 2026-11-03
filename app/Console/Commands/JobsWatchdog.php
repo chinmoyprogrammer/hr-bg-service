@@ -314,7 +314,7 @@ class JobsWatchdog extends Command
         }
     }
 
-    /** Every 6 h: drop success logs after 7 days, rows and resolved alerts after 90. */
+    /** Every 6 h: drop success logs after 7 days; rows, API calls and resolved alerts after 90. */
     private function retention(): void
     {
         if (!Cache::add(self::STATE . 'retention', 1, 6 * 3600)) {
@@ -331,6 +331,9 @@ class JobsWatchdog extends Command
             $n = $db->table('job_runs')
                 ->where(fn ($q) => $q->where('queued_at', '<', $cut)->orWhere(fn ($q) => $q->whereNull('queued_at')->where('started_at', '<', $cut)))
                 ->limit(5000)->delete();
+        } while ($n === 5000);
+        do {
+            $n = $db->table('job_http_calls')->where('started_at', '<', $cut)->limit(5000)->delete();
         } while ($n === 5000);
         $db->table('job_alerts')->where('resolved_at', '<', $cut)->delete();
     }

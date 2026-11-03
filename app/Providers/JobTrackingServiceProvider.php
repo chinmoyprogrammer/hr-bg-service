@@ -8,6 +8,7 @@ use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Queue\Events\JobExceptionOccurred;
@@ -87,8 +88,17 @@ class JobTrackingServiceProvider extends ServiceProvider
         });
 
         $events->listen(MessageLogged::class, fn ($e) => RunTracker::$current?->log($e->level, (string) $e->message, $e->context));
-        $events->listen(ResponseReceived::class, fn ($e) => RunTracker::$current?->http($e->response->failed()));
-        $events->listen(ConnectionFailed::class, fn () => RunTracker::$current?->http(true));
+        $events->listen(RequestSending::class, fn () => RunTracker::$current?->httpSending());
+        $events->listen(ResponseReceived::class, function ($e) {
+            $seconds = $e->response->transferStats?->getTransferTime();
+            RunTracker::$current?->httpCall(self::httpRequest($e->request) + [
+                'status' => $e->response->status(),
+                'response_headers' => $e->response->headers(),
+                'response_body' => $e->response->body(),
+                'duration_ms' => $seconds === null ? null : (int) round($seconds * 1000),
+            ]);
+        });
+        $events->listen(ConnectionFailed::class, fn ($e) => RunTracker::$current?->httpCall(self::httpRequest($e->request) + ['status' => null]));
 
         self::$reservedMemory = str_repeat(' ', 256 * 1024);
         register_shutdown_function(fn () => $this->shutdown());
@@ -267,6 +277,11 @@ class JobTrackingServiceProvider extends ServiceProvider
         }
         $json = json_encode(RunTracker::redact($value), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
         return strlen($json) > 65535 ? json_encode(['truncated' => true, 'bytes' => strlen($json)]) : $json;
+    }
+
+    private static function httpRequest(\Illuminate\Http\Client\Request $request): array
+    {
+        return ['method' => $request->method(), 'url' => $request->url(), 'request_headers' => $request->headers(), 'request_body' => $request->body()];
     }
 
     /** --name=value from the worker command line. */

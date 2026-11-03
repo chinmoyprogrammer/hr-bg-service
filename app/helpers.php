@@ -146,6 +146,13 @@ if (!function_exists('sendSms'))
             curl_setopt($ch, CURLOPT_TIMEOUT, 30); //timeout after 30 seconds
             curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
             $result=curl_exec ($ch);
+            // Job monitor: raw curl doesn't fire the Http client events, so record the call here
+            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            \App\Support\RunTracker::$current?->httpCall([
+                'method' => 'POST', 'url' => $URL, 'status' => $result === false || $status === 0 ? null : $status,
+                'error' => curl_error($ch), 'request_body' => $data, 'response_body' => is_string($result) ? $result : '',
+                'duration_ms' => (int) round(curl_getinfo($ch, CURLINFO_TOTAL_TIME) * 1000),
+            ]);
             curl_close($ch);
             return $result;
     }

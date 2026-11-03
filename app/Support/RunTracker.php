@@ -23,6 +23,9 @@ class RunTracker
     const SECRET_KEY = '/pass(word)?|token|secret|authori[sz]ation|api[_-]?key/i';
     const JWT = '/eyJ[\w-]+\.[\w-]+\.[\w-]*/';
     const WRITE_SQL = '/^\s*(insert|update|delete|replace|truncate|create|alter|drop)\b/i';
+    const HTTP_KEEP_ALL = 50;    // API calls saved per run; after that only failed ones...
+    const HTTP_KEEP_MAX = 200;   // ...up to this many in total (all are still counted)
+    const HTTP_CLIP = 8192;      // bodies and header blocks keep their first and last N bytes
 
     public static ?self $current = null;
     /** Set by the trigger consumer around dispatch; the payload hook copies it into the job payload. */
@@ -43,6 +46,8 @@ class RunTracker
     private ?array $pending = null;  // newest line, held back so consecutive repeats collapse into it
     private string $pendingKey = '';
     private float $lastFlush;
+    private int $httpSaved = 0;
+    private ?float $httpSentAt = null;
 
     public function __construct(public ?int $id, public string $uuid, public int $jobRef = 0)
     {
@@ -125,6 +130,138 @@ class RunTracker
     {
         $this->counts['http_calls']++;
         $this->counts['http_failed'] += (int) $failed;
+    }
+
+    // ---- Outgoing API calls (job_http_calls)
+
+    public function httpSending(): void
+    {
+        $this->httpSentAt = microtime(true);
+    }
+
+    /**
+     * One outgoing call, counted and saved to job_http_calls. $call: method, url, status (null = no response),
+     * error (why there was none), request_headers / response_headers (name => value or values),
+     * request_body / response_body (string, or an array of form fields), duration_ms (null = since httpSending()).
+     */
+    public function httpCall(array $call): void
+    {
+        try {
+            $status = $call['status'] ?? null;
+            $response = (string) ($call['response_body'] ?? '');
+            $error = $status === null ? (($call['error'] ?? '') ?: 'No response (connection failed)')
+                : ($status >= 400 ? "HTTP {$status}" : self::bodyError($response));
+            $this->http($error !== null);
+            $duration = $call['duration_ms'] ?? ($this->httpSentAt ? (int) round((microtime(true) - $this->httpSentAt) * 1000) : null);
+            $this->httpSentAt = null;
+
+            if (!$this->id || $this->httpSaved >= self::HTTP_KEEP_MAX || ($this->httpSaved >= self::HTTP_KEEP_ALL && $error === null)) {
+                return;
+            }
+            $this->httpSaved++;
+            $request = $call['request_body'] ?? '';
+            $request = is_array($request) ? json_encode(self::mask($request), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) : self::maskBody((string) $request);
+            $response = self::maskBody($response);
+            $row = [
+                'job_run_id' => $this->id,
+                'seq' => $this->counts['http_calls'],
+                'method' => strtoupper(substr((string) ($call['method'] ?? 'GET'), 0, 10)),
+                'url' => self::maskUrl((string) ($call['url'] ?? '')),
+                'status' => $status,
+                'failed' => $error !== null,
+                'error' => self::cut($error, 240),
+                'duration_ms' => $duration,
+                'request_headers' => self::clip(self::headerText($call['request_headers'] ?? [])),
+                'request_body' => self::clip($request),
+                'request_bytes' => strlen($request),
+                'response_headers' => self::clip(self::headerText($call['response_headers'] ?? [])),
+                'response_body' => self::clip($response),
+                'response_bytes' => strlen($response),
+                'started_at' => self::now(false, microtime(true) - ($duration ?? 0) / 1000),
+            ];
+            self::write(fn ($db) => $db->table('job_http_calls')->insert($row));
+        } catch (Throwable $e) {
+            error_log('[job-tracking] http call: ' . $e->getMessage());
+        }
+    }
+
+    /** Why a 2xx body reports a failure, or null: success false, status error/fail(ed), error(s) set; text saying error/fail. */
+    public static function bodyError(string $body): ?string
+    {
+        $data = json_decode($body, true);
+        if (is_array($data)) {
+            if (in_array($data['success'] ?? null, [false, 'false'], true)) {
+                return 'Response says success: false';
+            }
+            if (is_string($data['status'] ?? null) && in_array(strtolower($data['status']), ['error', 'fail', 'failed'], true)) {
+                return "Response says status: {$data['status']}";
+            }
+            foreach (['error', 'errors'] as $key) {
+                if (!empty($data[$key])) {
+                    return 'Response has ' . $key . ': ' . self::cut(is_string($data[$key]) ? $data[$key] : json_encode($data[$key]), 180);
+                }
+            }
+            return null;
+        }
+        // Plain text only (not JSON, not HTML pages, which mention "error" in their scripts)
+        $text = trim($body);
+        if ($data !== null || $text === '' || $text[0] === '<') {
+            return null;
+        }
+        return preg_match('/\b(error|fail(ed|ure)?)\b/i', $text) ? 'Response text: ' . self::cut($text, 180) : null;
+    }
+
+    /** First and last HTTP_CLIP bytes, with the cut size in between. */
+    public static function clip(?string $s): ?string
+    {
+        if ($s === null || $s === '' || strlen($s) <= 2 * self::HTTP_CLIP) {
+            return $s === '' ? null : $s;
+        }
+        $head = mb_strcut($s, 0, self::HTTP_CLIP);
+        $tail = mb_strcut($s, strlen($s) - self::HTTP_CLIP);
+        return $head . "\n... [" . (strlen($s) - strlen($head) - strlen($tail)) . " bytes cut] ...\n" . $tail;
+    }
+
+    /** Values of secret keys (password, token, api_key ...) replaced by [hidden], at any depth. */
+    public static function mask(array $data): array
+    {
+        foreach ($data as $k => $v) {
+            $data[$k] = is_string($k) && preg_match(self::SECRET_KEY, $k) ? '[hidden]'
+                : (is_array($v) ? self::mask($v) : (is_string($v) ? self::redactString($v) : $v));
+        }
+        return $data;
+    }
+
+    /** A JSON or form-encoded body with its secrets masked; other text only loses JWTs. */
+    public static function maskBody(string $body): string
+    {
+        $data = json_decode($body, true);
+        if (is_array($data)) {
+            return json_encode(self::mask($data), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        }
+        if (preg_match('/^[\w.%\[\]-]+=[^&\s]*(&[\w.%\[\]-]+=[^&\s]*)*$/', $body)) {
+            parse_str($body, $form);
+            return urldecode(http_build_query(self::mask($form)));
+        }
+        return self::redactString($body);
+    }
+
+    public static function maskUrl(string $url): string
+    {
+        return preg_replace_callback('/([?&])([^=&#]+)=([^&#]*)/', fn ($m) => preg_match(self::SECRET_KEY, urldecode($m[2]))
+            ? "{$m[1]}{$m[2]}=[hidden]" : $m[0], self::redactString($url));
+    }
+
+    /** "Name: value" lines; Authorization, Cookie, API keys and other secret headers masked. */
+    private static function headerText(array $headers): ?string
+    {
+        $lines = [];
+        foreach ($headers as $name => $values) {
+            foreach ((array) $values as $value) {
+                $lines[] = $name . ': ' . (preg_match(self::SECRET_KEY, (string) $name) || preg_match('/cookie/i', (string) $name) ? '[hidden]' : self::redactString((string) $value));
+            }
+        }
+        return $lines ? implode("\n", $lines) : null;
     }
 
     // ---- Log buffer
