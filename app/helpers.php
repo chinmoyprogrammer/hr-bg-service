@@ -446,3 +446,30 @@ if (!function_exists('old_erp_text'))
         return $value === '' ? null : $value;
     }
 }
+
+if (!function_exists('old_erp_national_id_no'))
+{
+    // NID or birth certificate no, whichever the employee is marked to have; the old ERP keeps one field
+    function old_erp_national_id_no($basic): ?string
+    {
+        $nid = old_erp_text($basic->nid_no);
+        $birthCertificate = old_erp_text($basic->birth_certificate_no);
+        if ((int) $basic->birth_certificate_required === 1 && (int) $basic->nid_required !== 1) {
+            return $birthCertificate ?? $nid;
+        }
+        return $nid ?? $birthCertificate;
+    }
+}
+
+if (!function_exists('sql_date'))
+{
+    // Y-m-d, or null for empty / 0000-00-00 / unparsable values
+    function sql_date($value): ?string
+    {
+        if (empty($value) || $value === '0000-00-00') {
+            return null;
+        }
+        $ts = strtotime($value);
+        return $ts === false ? null : date('Y-m-d', $ts);
+    }
+}
