@@ -377,6 +377,7 @@ if (!defined('OLD_ERP_MARITAL_STATUS')) {
         'Single'   => 58,
         'Married'  => 59,
         'Divorced' => 60,
+        'Widowed' => 61,
     ]);
 }
 
