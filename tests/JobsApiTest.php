@@ -105,14 +105,19 @@ class JobsApiTest extends TestCase
         $this->assertSame(503, $this->call_('GET', '/api/jobs/runs', 'unseen-token')[0]);
     }
 
-    public function test_star_lets_any_signed_in_user_view_but_not_act(): void
+    public function test_empty_or_star_lets_any_signed_in_user_view_but_not_act(): void
     {
         $id = $this->insertRun(['status' => 'failed']);
-        $this->setEnv(['JOBS_VIEWER_USER_IDS' => '*']);
+        foreach (['', '*'] as $viewers) {
+            $this->setEnv(['JOBS_VIEWER_USER_IDS' => $viewers]);
+            $this->assertSame(200, $this->call_('GET', '/api/jobs/runs', 'other')[0]);
+            $this->assertSame(200, $this->call_('GET', '/api/jobs/summary', 'other')[0]);
+            $this->assertSame(403, $this->call_('POST', "/api/jobs/runs/{$id}/retry", 'other')[0]);
+            $this->assertSame(401, $this->call_('GET', '/api/jobs/runs', 'nobody')[0]);
+        }
+        putenv('JOBS_VIEWER_USER_IDS');  // unset
+        unset($_ENV['JOBS_VIEWER_USER_IDS'], $_SERVER['JOBS_VIEWER_USER_IDS']);
         $this->assertSame(200, $this->call_('GET', '/api/jobs/runs', 'other')[0]);
-        $this->assertSame(200, $this->call_('GET', '/api/jobs/summary', 'other')[0]);
-        $this->assertSame(403, $this->call_('POST', "/api/jobs/runs/{$id}/retry", 'other')[0]);
-        $this->assertSame(401, $this->call_('GET', '/api/jobs/runs', 'nobody')[0]);
 
         $this->setEnv(['JOBS_ADMIN_USER_IDS' => '*']);  // never a wildcard for actions
         $this->assertSame(403, $this->call_('POST', "/api/jobs/runs/{$id}/retry", 'other')[0]);
