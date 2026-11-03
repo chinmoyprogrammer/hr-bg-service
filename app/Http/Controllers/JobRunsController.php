@@ -50,7 +50,7 @@ class JobRunsController extends Controller
         return response()->json(['data' => $rows, 'page' => $page, 'per_page' => $perPage, 'total' => $total]);
     }
 
-    /** GET /api/jobs/runs/{id}?levels=error,warning,tx */
+    /** GET /api/jobs/runs/{id}?levels=error,warning,tx: the run, its log, related runs, alerts and API calls. */
     public function show(Request $request, int $id)
     {
         $db = RunTracker::db();
@@ -72,6 +72,9 @@ class JobRunsController extends Controller
                 ->when($run->parent_run_id, fn ($q) => $q->orWhere('id', $run->parent_run_id))
                 ->orderBy('id')->get(['id', 'status', 'trigger_source', 'parent_run_id', 'queued_at', 'started_at', 'finished_at']),
             'alerts' => $db->table('job_alerts')->where('job', $run->job)->orderByDesc('id')->limit(5)->get(),
+            // Failed first, then in call order; http_calls on the run minus these = calls not saved (limits)
+            'http_calls' => $db->table('job_http_calls')->where('job_run_id', $id)->orderByDesc('failed')->orderBy('seq')->get()
+                ->map(fn ($c) => ['failed' => (bool) $c->failed] + (array) $c),
         ]);
     }
 
