@@ -188,7 +188,7 @@ class JobsApiTest extends TestCase
         config(['queue.connections.rabbitmq' => ['driver' => 'sync']]);  // run it right here, through the tracking provider
         $failed = $this->insertRun(['status' => 'failed', 'job_class' => ApiTestJob::class, 'payload' => '{"date":"2026-11-01"}']);
 
-        [$status, $body] = $this->call_('POST', "/api/jobs/runs/{$failed}/retry", 'admin');
+        [$status, $body] = $this->call_('POST', "/api/jobs/runs/{$failed}/retry", 'admin', [], ['X-Real-IP' => '30.30.28.71']);
         $this->assertSame(202, $status);
         $this->assertSame(['date' => '2026-11-01'], ApiTestJob::$received);
 
@@ -197,6 +197,7 @@ class JobsApiTest extends TestCase
         $this->assertSame($failed, (int) $retry->parent_run_id);
         $this->assertSame('retry', $retry->trigger_source);
         $this->assertSame(7, (int) $retry->triggered_by);
+        $this->assertSame('30.30.28.71', $retry->triggered_ip);  // the admin who clicked, from the gateway's X-Real-IP
         $this->assertSame(2, RunTracker::db()->table('job_runs')->count());
     }
 
@@ -235,12 +236,12 @@ class JobsApiTest extends TestCase
         $conn->shouldReceive('pushRaw')->andReturnUsing(function ($body, $queue) use (&$sent) { $sent[] = [$queue, $body]; });
         Queue::shouldReceive('connection')->with('rabbitmq')->andReturn($conn);
 
-        $this->assertSame(202, $this->call_('POST', "/api/jobs/runs/{$parsed}/replay", 'admin')[0]);
+        $this->assertSame(202, $this->call_('POST', "/api/jobs/runs/{$parsed}/replay", 'admin', [], ['X-Real-IP' => '2001:db8::7'])[0]);
         $this->assertSame(202, $this->call_('POST', "/api/jobs/runs/{$raw}/replay", 'admin')[0]);
         $this->assertSame(409, $this->call_('POST', "/api/jobs/runs/{$notTrigger}/replay", 'admin')[0]);
 
         $this->assertSame('x_trigger_queue', $sent[0][0]);
-        $this->assertSame(['date' => '2026-11-01', 'trigger_source' => 'replay', 'triggered_by' => 7, 'parent_run_id' => $parsed], json_decode($sent[0][1], true));
+        $this->assertSame(['date' => '2026-11-01', 'trigger_source' => 'replay', 'triggered_by' => 7, 'triggered_ip' => '2001:db8::7', 'parent_run_id' => $parsed], json_decode($sent[0][1], true));
         $this->assertSame('not json', $sent[1][1]);  // unparseable: exactly as it came
     }
 
@@ -253,10 +254,10 @@ class JobsApiTest extends TestCase
         $conn->shouldReceive('pushRaw')->andReturnUsing(function ($body, $queue) use (&$sent) { $sent[] = [$queue, json_decode($body, true)]; });
         Queue::shouldReceive('connection')->with('rabbitmq')->andReturn($conn);
 
-        [$status, $body] = $this->call_('POST', "/api/jobs/missed/{$missed}/run-now", 'admin');
+        [$status, $body] = $this->call_('POST', "/api/jobs/missed/{$missed}/run-now", 'admin', [], ['X-Real-IP' => 'not-an-ip']);
         $this->assertSame(202, $status);
         $this->assertSame(['date' => '2026-10-31', 'year' => '2026', 'month' => '10', 'type' => 'all'], $body['payload']);
-        $this->assertSame(['probe_trigger_queue', $body['payload'] + ['trigger_source' => 'catchup', 'triggered_by' => 7, 'parent_run_id' => $missed]], $sent[0]);
+        $this->assertSame(['probe_trigger_queue', $body['payload'] + ['trigger_source' => 'catchup', 'triggered_by' => 7, 'triggered_ip' => '127.0.0.1', 'parent_run_id' => $missed]], $sent[0]);  // a bad header falls back to the connecting address
 
         // The consumer's row for it exists now: a second click is refused unless forced
         $this->insertRun(['status' => 'queued', 'parent_run_id' => $missed, 'trigger_source' => 'catchup']);
