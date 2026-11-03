@@ -153,6 +153,7 @@ class JobTrackingServiceProvider extends ServiceProvider
                 'queue' => $queue,
                 'trigger_source' => $parentId ? 'retry' : (string) ($input['trigger_source'] ?? 'api'),
                 'triggered_by' => is_numeric($input['triggered_by'] ?? null) ? (int) $input['triggered_by'] : null,
+                'triggered_ip' => $parentId ? null : RunTracker::ip($input['triggered_ip'] ?? null),
                 'parent_run_id' => $parentId,
                 'payload' => self::json($input),
                 'queued_at' => !$parentId && isset($payload['pushed_at']) ? RunTracker::now(false, (float) $payload['pushed_at']) : null,

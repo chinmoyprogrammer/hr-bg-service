@@ -468,6 +468,18 @@ class RunTracker
         ));
     }
 
+    /** A valid IPv4/IPv6 address, else null (payloads and headers are not trusted to hold one). */
+    public static function ip(mixed $value): ?string
+    {
+        return is_string($value) && filter_var($value, FILTER_VALIDATE_IP) ? $value : null;
+    }
+
+    /** The caller's browser address: the api-gateway sets X-Real-IP, and hr-bg is only reachable through it. */
+    public static function requestIp(\Illuminate\Http\Request $request): ?string
+    {
+        return self::ip($request->header('X-Real-IP')) ?? self::ip($request->ip());
+    }
+
     /** processTempData_queue / processTempData_trigger_queue -> processTempData */
     public static function jobName(string $queue): string
     {
