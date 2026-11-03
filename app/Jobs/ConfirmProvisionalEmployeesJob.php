@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\EmployeeLeaveBalance;
 use App\Models\EmployeeOfficialInformation;
 use App\Models\LeavePolicyDetail;
+use App\Services\OldErpEmployeeService;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -18,6 +19,9 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
 
     use InteractsWithQueue, Queueable, SerializesModels;
 
+
+    private const PROBATIONARY = 10; // employee_types.id
+    private const REGULAR = 69; // employee_types.id, permanent employee
 
     protected array $payload;
 
@@ -34,9 +38,19 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
         //DB::enableQueryLog();
         $employees = EmployeeOfficialInformation::query()
             ->whereNotNull('joining_date')
-            ->whereNotNull('provisioner_days')
-            ->whereNull('confirmation_date')
-            ->whereRaw('DATEDIFF(?, joining_date) >= provisioner_days', [$targetDate])
+            ->where(function ($query) use ($targetDate) {
+                // probationary employee whose confirmation date has arrived
+                $query->where(function ($q) use ($targetDate) {
+                    $q->where('employee_type_id', self::PROBATIONARY)
+                        ->where('confirmation_date', '<=', $targetDate);
+                })
+                // no confirmation date yet and provision period is over
+                ->orWhere(function ($q) use ($targetDate) {
+                    $q->whereNotNull('provisioner_days')
+                        ->whereNull('confirmation_date')
+                        ->whereRaw('DATEDIFF(?, joining_date) >= provisioner_days', [$targetDate]);
+                });
+            })
             ->get([
                 'id',
                 'employee_user_id',
@@ -58,10 +72,29 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
         }
 
         foreach ($employees as $employee) {
-            $employee->confirmation_date = $targetDate;
-            if($employee->save()){
+            DB::beginTransaction();
+            try {
+                $employee->confirmation_date = $employee->confirmation_date ?: $targetDate;
+                $promoted = $employee->employee_type_id == self::PROBATIONARY;
+                if ($promoted) {
+                    $employee->employee_type_id = self::REGULAR;
+                    DB::table('users')->where('id', $employee->employee_user_id)->update(['employee_type_id' => self::REGULAR]);
+                }
+                $employee->save();
                 $this->assignLeaveBalanceToEmployee($employee);
 
+                //... the old ERP must take the type change too, otherwise nothing is saved here
+                if ($promoted) {
+                    (new OldErpEmployeeService())->saveEmployeeDataToOldErp($employee->employee_user_id);
+                }
+                DB::commit();
+            } catch (\Throwable $e) {
+                // stays probationary, so the next run tries this employee again
+                DB::rollBack();
+                Log::error('ConfirmProvisionalEmployeesJob: employee not confirmed', [
+                    'employee_user_id' => $employee->employee_user_id,
+                    'error' => $e->getMessage(),
+                ]);
             }
         }
         regenerateEmployeeCache();
@@ -129,7 +162,7 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
             }
             
             // for new Employee, calculate employee leave days comparing to their joining date , according to HR policy
-            $leaveDays = $this->calculateAllowedLeaveDays($leavePolicyDetail->days, $employeeOfficialInfo->joiningDate); // todo:: calculate according to formula // Done
+            $leaveDays = $this->calculateAllowedLeaveDays($leavePolicyDetail->days, $employeeOfficialInfo->joining_date); // todo:: calculate according to formula // Done
 
             $encashment_basis_rate = $leavePolicyDetail->encashment_basis_rate ==0 ? 1 : $leavePolicyDetail->encashment_basis_rate/100;
             if($leavePolicyDetail->encashment_basis =='basic' )
