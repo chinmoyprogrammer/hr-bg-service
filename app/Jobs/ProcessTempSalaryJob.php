@@ -43,6 +43,11 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
     // order loans are recovered in when net salary can't cover them all
     private const LOAN_PRIORITY = ['advance' => 1, 'loan' => 2, 'pf_loan' => 3];
 
+    // salary_heads.head_category of others deduction heads (fuel etc.), owned by hr-admin PayrollOthersDeduction
+    private const OTHERS_DEDUCTION_HEAD_CATEGORY = 2;
+    // meal_loan_ait_pf_etc_pauses.pause_type of a monthly deduction pause (SERVICE_PAUSE_TYPE)
+    private const OTHERS_DEDUCTION_PAUSE_TYPE = 6;
+
     public function __construct(array $payload)
     {
         $this->payload = $payload;
@@ -69,6 +74,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         // Read from the repayment schedule (hr-admin LoanService owns it), so carried
         // amounts, reschedules, waivers and a smaller last installment are honoured.
         $dueLoanRowsByUser = $this->dueLoanRows((int) $generateMonth, (int) $generateYear, $payload['employeeIds'] ?? []);
+
+        // others deductions (fuel etc.) to take this month, per employee: [head_id => amount]
+        $othersDeductionsByUser = $this->othersDeductionRows((int) $generateMonth, (int) $generateYear, $payload['employeeIds'] ?? []);
 
         // PR damages paused for this month -- only pauses linked to one PR count
         $pausedPrKeys = DB::table('meal_loan_ait_pf_etc_pauses')
@@ -174,7 +182,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             $userQuery->whereIn('id', $payload['employeeIds']);
         }
         $userQuery->lazy()
-            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate, $dueLoanRowsByUser, $pausedPrKeys) {
+            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate, $dueLoanRowsByUser, $pausedPrKeys, $othersDeductionsByUser) {
                 $total_earning = $total_deductable = $net_salary_payable = 0;
                 $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
                 $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
@@ -553,6 +561,22 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ];
                     }
                 }
+                //.... others deductions (fuel etc.) -- a fixed monthly amount like meal / AIT / PF,
+                // so taken in full before loans and PR (not capped by net salary)
+                foreach ($othersDeductionsByUser[$user->id] ?? [] as $headId => $amount) {
+                    $total_deductable += $amount;
+                    $PayrollSalarySheetHeadsTemp[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'head_id' => $headId,
+                        'value' => $amount,
+                        'is_earning' => 0,
+                        'created_user_id' => getUserId(), // todo:: need a system user id
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
+                }
+
                 //.... process and gather other regular salary components(like basic salary, allowances, deductions(attendance related), etc.)
                 //get Payroll salary heads ( individual employee employee salary heads like: basic, medical, House rent etc)
                 //.... get salary components data of this employee
@@ -858,6 +882,56 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             'bank' => round($bank, 2),
             'mfs' => round($mfs, 2),
         ];
+    }
+
+    /**
+     * Others deductions to take in $month/$year, keyed by employee_user_id then
+     * head_id (amounts of one head summed). A row counts when its
+     * payroll_salary_heads row is live and the linked payroll_others_deductions
+     * entry is approved, running, its effective_from..effective_to covers the
+     * month, and the employee has no approved monthly deduction pause for that
+     * month (month-wise, whole year, or any date in the month -- same rule as
+     * hr-admin PayrollOthersDeduction::PAUSE_COVERS_MONTH_SQL).
+     *
+     * @return array<int, array<int, float>>
+     */
+    private function othersDeductionRows(int $month, int $year, array $employeeIds): array
+    {
+        $monthStart = sprintf('%04d-%02d-01', $year, $month);
+
+        $rows = DB::table('payroll_salary_heads as sh')
+            ->join('salary_heads as h', 'h.id', '=', 'sh.salary_head_id')
+            ->join('payroll_others_deductions as od', 'sh.child_data_identifier_key_incoming', '=', DB::raw("CONCAT('payroll_others_deductions_', od.id)"))
+            ->where('h.head_category', self::OTHERS_DEDUCTION_HEAD_CATEGORY)
+            ->whereNull('sh.deleted_at')
+            ->whereNull('od.deleted_at')
+            ->where('od.approval_status', 1) // approved
+            ->where('od.status', 1)          // running (on hold / finished are skipped)
+            ->where('od.effective_from', '<=', $monthStart)
+            ->where(fn ($q) => $q->whereNull('od.effective_to')->orWhere('od.effective_to', '>=', $monthStart))
+            ->whereNotExists(function ($q) use ($month, $year) {
+                $q->select(DB::raw(1))
+                    ->from('meal_loan_ait_pf_etc_pauses as p')
+                    ->whereColumn('p.employee_user_id', 'od.employee_user_id')
+                    ->where('p.pause_type', self::OTHERS_DEDUCTION_PAUSE_TYPE)
+                    ->where('p.approval_status', 1)
+                    ->whereNull('p.deleted_at')
+                    ->where(function ($q) use ($month, $year) {
+                        $q->where(fn ($q) => $q->where('p.pause_year', $year)->where('p.pause_month', $month))
+                          ->orWhere(fn ($q) => $q->where('p.pause_year', $year)->whereNull('p.pause_month')->whereNull('p.pause_date'))
+                          ->orWhere(fn ($q) => $q->whereYear('p.pause_date', $year)->whereMonth('p.pause_date', $month));
+                    });
+            })
+            ->when($employeeIds, fn ($q) => $q->whereIn('sh.employee_user_id', $employeeIds))
+            ->groupBy('sh.employee_user_id', 'sh.salary_head_id')
+            ->selectRaw('sh.employee_user_id, sh.salary_head_id, SUM(sh.amount) AS amount')
+            ->get();
+
+        $byUser = [];
+        foreach ($rows as $r) {
+            $byUser[(int) $r->employee_user_id][(int) $r->salary_head_id] = round((float) $r->amount, 2);
+        }
+        return $byUser;
     }
 
     /**
