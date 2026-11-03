@@ -20,7 +20,7 @@ trait TrackingDatabase
         $this->app->configure('database');
         $sqlite = ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''];
         config(['database.connections.mysql' => $sqlite, 'database.connections.tracking' => $sqlite, 'database.default' => 'tracking']);
-        foreach (glob(__DIR__ . '/../database/migrations/2026_11_01_1000*_*.php') as $migration) {
+        foreach (glob(__DIR__ . '/../database/migrations/2026_11_0[1-3]_1000*_*.php') as $migration) {
             (require $migration)->up();
         }
         config(['database.default' => 'mysql']);

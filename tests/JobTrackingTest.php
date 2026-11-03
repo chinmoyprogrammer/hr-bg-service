@@ -72,6 +72,17 @@ class JobTrackingTest extends TestCase
         $this->assertNull(RunTracker::$current);
     }
 
+    public function test_who_started_it_and_from_where_come_from_the_payload(): void
+    {
+        $input = fn (array $p) => ['data' => ['mode' => 'write', 'command' => serialize(new TrackingInputProbe($p))]];
+        $this->work($this->job('write', $input(['date' => '2026-11-03', 'triggered_by' => 42, 'triggered_ip' => '30.30.28.71'])));
+        $this->work($this->job('write', $input(['triggered_by' => 'x', 'triggered_ip' => "1.2.3.4'; drop"])));
+
+        [$good, $bad] = $this->runs()->all();
+        $this->assertSame([42, '30.30.28.71'], [(int) $good->triggered_by, $good->triggered_ip]);
+        $this->assertSame([null, null], [$bad->triggered_by, $bad->triggered_ip]);
+    }
+
     public function test_exception_before_last_attempt_is_retrying(): void
     {
         $job = $this->job('throw');
@@ -244,5 +255,13 @@ class TrackingTestHandler
                 Log::info('inside the run');
                 break;
         }
+    }
+}
+
+/** Stands in for a queued job's serialized command: the provider reads its protected $payload as the run's input. */
+class TrackingInputProbe
+{
+    public function __construct(protected array $payload)
+    {
     }
 }

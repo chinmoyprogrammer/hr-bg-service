@@ -160,6 +160,7 @@ class ConsumeTriggerQueues extends Command
             'queue' => $targetQueue,
             'trigger_source' => (string) ($payload['trigger_source'] ?? 'scheduler'),
             'triggered_by' => is_numeric($payload['triggered_by'] ?? null) ? (int) $payload['triggered_by'] : null,
+            'triggered_ip' => RunTracker::ip($payload['triggered_ip'] ?? null),
             // set by the jobs API on replay / run-now
             'parent_run_id' => is_numeric($payload['parent_run_id'] ?? null) ? (int) $payload['parent_run_id'] : null,
             'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
@@ -183,6 +184,8 @@ class ConsumeTriggerQueues extends Command
             'job' => RunTracker::jobName($queueName),
             'queue' => $queueName,
             'trigger_source' => (string) ($payload['trigger_source'] ?? 'scheduler'),
+            'triggered_by' => is_numeric($payload['triggered_by'] ?? null) ? (int) $payload['triggered_by'] : null,
+            'triggered_ip' => RunTracker::ip($payload['triggered_ip'] ?? null),
             'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
             'status' => 'trigger_failed',
             'queued_at' => $queuedAt,

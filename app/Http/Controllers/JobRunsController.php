@@ -12,7 +12,7 @@ use Illuminate\Support\Str;
 /** Job runs API (docs/job-failure-tracking-plan.html, Phase 4). Behind JobsAuth. */
 class JobRunsController extends Controller
 {
-    const LIST_COLUMNS = ['id', 'run_uuid', 'job', 'job_class', 'queue', 'trigger_source', 'triggered_by', 'parent_run_id', 'status',
+    const LIST_COLUMNS = ['id', 'run_uuid', 'job', 'job_class', 'queue', 'trigger_source', 'triggered_by', 'triggered_ip', 'parent_run_id', 'status',
         'flags', 'attempt', 'max_attempts', 'queued_at', 'started_at', 'finished_at', 'wait_ms', 'duration_ms', 'error_class',
         'error_message', 'tx_committed', 'tx_rolled_back', 'writes_kept', 'writes_undone', 'http_calls', 'http_failed',
         'errors', 'warnings', 'log_lines', 'log_dropped', 'metrics'];
@@ -50,7 +50,7 @@ class JobRunsController extends Controller
         return response()->json(['data' => $rows, 'page' => $page, 'per_page' => $perPage, 'total' => $total]);
     }
 
-    /** GET /api/jobs/runs/{id}?levels=error,warning,tx */
+    /** GET /api/jobs/runs/{id}?levels=error,warning,tx: the run, its log, related runs, alerts and API calls. */
     public function show(Request $request, int $id)
     {
         $db = RunTracker::db();
@@ -72,6 +72,9 @@ class JobRunsController extends Controller
                 ->when($run->parent_run_id, fn ($q) => $q->orWhere('id', $run->parent_run_id))
                 ->orderBy('id')->get(['id', 'status', 'trigger_source', 'parent_run_id', 'queued_at', 'started_at', 'finished_at']),
             'alerts' => $db->table('job_alerts')->where('job', $run->job)->orderByDesc('id')->limit(5)->get(),
+            // Failed first, then in call order; http_calls on the run minus these = calls not saved (limits)
+            'http_calls' => $db->table('job_http_calls')->where('job_run_id', $id)->orderByDesc('failed')->orderBy('seq')->get()
+                ->map(fn ($c) => ['failed' => (bool) $c->failed] + (array) $c),
         ]);
     }
 
@@ -145,7 +148,7 @@ class JobRunsController extends Controller
         }
         $job = $class === RabbitMQJob::class ? new RabbitMQJob($payload ?? json_decode((string) $run->payload), $run->queue) : new $class($payload ?? []);
         $newId = self::dispatchTracked($job, $run->queue, [
-            'job' => $run->job, 'job_class' => $class, 'trigger_source' => 'retry', 'triggered_by' => self::userId($user),
+            'job' => $run->job, 'job_class' => $class, 'trigger_source' => 'retry', 'triggered_by' => self::userId($user), 'triggered_ip' => RunTracker::requestIp($request),
             'parent_run_id' => $id, 'payload' => $run->payload, 'flags' => $force ? json_encode(['forced']) : null,
         ]);
 
@@ -166,7 +169,7 @@ class JobRunsController extends Controller
         // Unparseable messages go back exactly as they came; parsed ones get who/why for the new row
         $body = array_key_exists('raw', $payload) && count($payload) === 1
             ? (string) $payload['raw']
-            : json_encode(array_merge($payload, ['trigger_source' => 'replay', 'triggered_by' => self::userId($request->attributes->get('jobs_user')), 'parent_run_id' => $id]));
+            : json_encode(array_merge($payload, ['trigger_source' => 'replay', 'triggered_by' => self::userId($request->attributes->get('jobs_user')), 'triggered_ip' => RunTracker::requestIp($request), 'parent_run_id' => $id]));
         self::publish($run->queue, $body);
 
         return response()->json(['message' => "Replayed to {$run->queue}"], 202);
@@ -191,7 +194,7 @@ class JobRunsController extends Controller
             $payload = self::forSlot(json_decode((string) $run->payload, true) ?: [], strtotime($run->queued_at));
         }
         self::publish($run->queue, json_encode(array_merge($payload, [
-            'trigger_source' => 'catchup', 'triggered_by' => self::userId($request->attributes->get('jobs_user')), 'parent_run_id' => $id,
+            'trigger_source' => 'catchup', 'triggered_by' => self::userId($request->attributes->get('jobs_user')), 'triggered_ip' => RunTracker::requestIp($request), 'parent_run_id' => $id,
         ])));
 
         return response()->json(['message' => "Catch-up sent to {$run->queue}", 'payload' => $payload], 202);

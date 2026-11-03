@@ -12,7 +12,7 @@ use Throwable;
  * /api/jobs/* auth. A bearer token is checked with the auth service, the same endpoint the
  * api-gateway uses (so a caller inside the Docker network can't just send an X-User-Id).
  * There are no roles in this ERP, so access is by user id lists:
- *   JOBS_VIEWER_USER_IDS  read runs, logs, summary (admins are viewers too)
+ *   JOBS_VIEWER_USER_IDS  read runs, logs, summary (admins are viewers too); unset, empty or * = any signed-in user
  *   JOBS_ADMIN_USER_IDS   also retry / replay / run-now
  * X-Internal-Token = JOBS_INTERNAL_TOKEN is full access, for scripts and ops.
  * Usage: 'jobs.auth' (viewer) or 'jobs.auth:admin'.
@@ -41,8 +41,10 @@ class JobsAuth
         }
 
         $admins = self::ids('JOBS_ADMIN_USER_IDS');
-        $allowed = $level === 'admin' ? $admins : [...$admins, ...self::ids('JOBS_VIEWER_USER_IDS')];
-        if (!in_array((string) $userId, $allowed, true)) {
+        $viewers = self::ids('JOBS_VIEWER_USER_IDS');
+        // ponytail: viewing is open to every signed-in user until the ERP has role permissions; list ids to restrict it
+        $open = $level !== 'admin' && (!$viewers || in_array('*', $viewers, true));
+        if (!$open && !in_array((string) $userId, $level === 'admin' ? $admins : [...$admins, ...$viewers], true)) {
             return response()->json(['message' => $level === 'admin' ? 'Job admin access required' : 'Job dashboard access required'], 403);
         }
 
