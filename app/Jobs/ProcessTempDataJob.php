@@ -16,6 +16,7 @@ use App\Models\LeaveApplicationDetail;
 use App\Models\PayrollAccruedAllowanceIncome;
 use App\Models\Shift;
 use App\Services\AttendanceDateProcessorService;
+use App\Support\RunTracker;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -525,6 +526,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             }
 
             // ── Bulk insert attendance ────────────────────────────────────────────
+            RunTracker::metric('attendance', count($prepared));  // job_schedules.expect_metric: 0 or a sudden drop is flagged
             if (empty($prepared)) {
                 Log::warning('ProcessTempDataJob no attendance rows prepared', [
                     'prepared_count' => count($prepared),
@@ -546,9 +548,11 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 }
                 DB::commit();
             } catch (\Throwable $e) {
+                // No transaction is open here (removed in da1b3c3), so this rollBack undoes nothing: the
+                // attendance deleted above stays deleted. Throw, so the run fails visibly instead of passing.
                 DB::rollBack();
                 Log::error('ProcessTempDataJob bulk insert failed', ['error' => $e->getMessage()]);
-                return;
+                throw $e;
             }
 
             // ── Resolve inserted IDs and back-fill attendance_id references ───────
@@ -666,7 +670,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 'line' => $e->getLine(),
                 'file' => $e->getFile(),
             ]);
-            return;
+            // Rethrown so the worker retries it (or, after writes, fails it as retry-unsafe) and alerts
+            throw $e;
         }
     }//
 }

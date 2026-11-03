@@ -24,6 +24,9 @@ class RabbitMQJob extends Job implements ShouldQueue
     protected $data;
     protected $queueName;
 
+    // seconds; handle() can run ProcessTempSalaryJob inline, so match its limit
+    public $timeout = 600;
+
     /**
      * Create a new job instance.
      *
@@ -43,6 +46,20 @@ class RabbitMQJob extends Job implements ShouldQueue
     public function handle(): void
     {
         $message = is_string($this->data) ? $this->data : json_encode($this->data);
+
+        // outside the try below: a failed old ERP call must reach the worker so it retries
+        if ($this->queueName === 'oldErpLoanSync_queue') {
+            (new OldErpLoanSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
+        if ($this->queueName === 'oldErpLateConsiderSync_queue') {
+            (new OldErpLateConsiderSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
+        if ($this->queueName === 'oldErpAttendanceSync_queue') {
+            (new OldErpAttendanceSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
 
         try {
             Log::info('RabbitMQJob received message', ['message' => $message]);
@@ -111,6 +128,10 @@ class RabbitMQJob extends Job implements ShouldQueue
                     (new EmployeeTransferApplyJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
                     return;
                 }
+                if ($targetQueue === 'sendBulkSMSToMultiUserOneSMS_queue') {
+                    (new SendBulkSMSToMultiUserOneSMSJob(is_array($this->data) ? $this->data : ['payload' => $this->data]))->handle();
+                    return;
+                }
 
                 Log::info('RabbitMQJob skipped re-publish due to same queue', ['queue' => $targetQueue, 'payload' => $this->data]);
                 return;
@@ -142,13 +163,16 @@ class RabbitMQJob extends Job implements ShouldQueue
                 ]);
             }
         } catch (\Throwable $e) {
-            Log::error('RabbitMQJob publish failed', [
+            Log::error('RabbitMQJob failed', [
                 'queue' => $this->queueName,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            // Covers the jobs run inline above (salary, attendance, ...) as well as the publish: the
+            // worker retries or fails the run instead of counting it as done
+            throw $e;
         }
     }
 }

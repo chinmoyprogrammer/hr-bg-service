@@ -6,7 +6,9 @@ use App\Jobs\ProcessTempDataJob;
 use App\Jobs\EmployeeDeactivation;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use App\Support\RunTracker;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
+use PhpAmqpLib\Exception\AMQPTimeoutException;
 use Str;
 
 class ConsumeTriggerQueues extends Command
@@ -50,32 +52,37 @@ class ConsumeTriggerQueues extends Command
                 false,
                 false,
                 function ($msg) use ($queueName) {
-                    
+                    $runUuid = (string) \Illuminate\Support\Str::uuid();
+                    // Publish time (set by task-scheduler), so a trigger consumed late still counts for its slot
+                    $queuedAt = $msg->has('timestamp') ? RunTracker::now(false, (float) $msg->get('timestamp')) : RunTracker::now();
                     $body = $msg->getBody();
                     try {
                         $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
-                        
+
                     } catch (\Throwable $e) {
                         Log::error('Trigger message is not valid JSON', [
                             'queue' => $queueName,
                             'body' => $body,
                             'error' => $e->getMessage(),
                         ]);
+                        $this->recordTriggerFailed($runUuid, $queueName, ['raw' => RunTracker::cut($body, 65535)], $e, $queuedAt);
                         $msg->ack();
                         return;
                     }
                     Log::info('Consuming trigger message from queue final: ' . $queueName);
+                    $payload = is_array($payload) ? $payload : [];
                     try {
-                        $this->dispatchFromTriggerQueue($queueName, is_array($payload) ? $payload : []);
-                        $msg->ack();
+                        $this->dispatchFromTriggerQueue($queueName, $payload, $runUuid, $queuedAt);
                     } catch (\Throwable $e) {
                         Log::error('Trigger consumer failed', [
                             'queue' => $queueName,
                             'payload' => $payload,
                             'error' => $e->getMessage(),
                         ]);
-                        $msg->reject(false);
+                        // Acked, not dropped: body and error are kept in job_runs for replay
+                        $this->recordTriggerFailed($runUuid, $queueName, $payload, $e, $queuedAt);
                     }
+                    $msg->ack();
                 }
             );
         }
@@ -83,7 +90,12 @@ class ConsumeTriggerQueues extends Command
         $this->info('Consuming trigger queues: ' . implode(', ', $queueList));
 
         while ($channel->is_consuming()) {
-            $channel->wait();
+            try {
+                $channel->wait(null, false, 30);
+            } catch (AMQPTimeoutException $e) {
+                // idle; wake up to beat
+            }
+            RunTracker::beat('trigger_consumer', ['host' => gethostname(), 'pid' => getmypid()]);
         }
 
         $channel->close();
@@ -92,16 +104,12 @@ class ConsumeTriggerQueues extends Command
         return 0;
     }
 
-    private function dispatchFromTriggerQueue(string $queueName, array $payload): void
+    private function dispatchFromTriggerQueue(string $queueName, array $payload, string $runUuid, string $queuedAt): void
     {
         Log::info('Consuming trigger message', ['queue' => $queueName, 'payload' => $payload]);
         $suffix = '_trigger_queue';
         if (!\Illuminate\Support\Str::endsWith($queueName, $suffix)) {
-            Log::warning('No trigger handler registered for queue', [
-                'queue' => $queueName,
-                'payload' => $payload,
-            ]);
-            return;
+            throw new \RuntimeException("No trigger handler registered for queue [{$queueName}]");
         }
 
         $jobMapJson = (string) env('HR_BG_TRIGGER_JOB_MAP', '');
@@ -131,12 +139,7 @@ class ConsumeTriggerQueues extends Command
         }
 
         if (!class_exists($jobClass)) {
-            Log::warning('No trigger handler registered for queue', [
-                'queue' => $queueName,
-                'payload' => $payload,
-                'resolved_job' => $jobClass,
-            ]);
-            return;
+            throw new \RuntimeException("No trigger handler registered for queue [{$queueName}]: {$jobClass} not found");
         }
 
         try {
@@ -150,6 +153,44 @@ class ConsumeTriggerQueues extends Command
             throw $e;
         }
 
-        dispatch($job->onQueue($targetQueue)->onConnection('rabbitmq'));
+        RunTracker::write(fn ($db) => $db->table('job_runs')->insert([
+            'run_uuid' => $runUuid,
+            'job' => $baseName,
+            'job_class' => $jobClass,
+            'queue' => $targetQueue,
+            'trigger_source' => (string) ($payload['trigger_source'] ?? 'scheduler'),
+            'triggered_by' => is_numeric($payload['triggered_by'] ?? null) ? (int) $payload['triggered_by'] : null,
+            // set by the jobs API on replay / run-now
+            'parent_run_id' => is_numeric($payload['parent_run_id'] ?? null) ? (int) $payload['parent_run_id'] : null,
+            'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+            'status' => 'queued',
+            'queued_at' => $queuedAt,
+        ]));
+
+        // The payload hook copies this into the job, so the worker updates the row above
+        RunTracker::$nextRunUuid = $runUuid;
+        try {
+            dispatch($job->onQueue($targetQueue)->onConnection('rabbitmq'));
+        } finally {
+            RunTracker::$nextRunUuid = null;
+        }
+    }
+
+    private function recordTriggerFailed(string $runUuid, string $queueName, array $payload, \Throwable $e, string $queuedAt): void
+    {
+        $now = RunTracker::now();
+        RunTracker::write(fn ($db) => $db->table('job_runs')->updateOrInsert(['run_uuid' => $runUuid], [
+            'job' => RunTracker::jobName($queueName),
+            'queue' => $queueName,
+            'trigger_source' => (string) ($payload['trigger_source'] ?? 'scheduler'),
+            'payload' => json_encode(RunTracker::redact($payload), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+            'status' => 'trigger_failed',
+            'queued_at' => $queuedAt,
+            'finished_at' => $now,
+            'worker_host' => gethostname(),
+            'worker_pid' => getmypid(),
+            'error_class' => get_class($e),
+            'error_message' => RunTracker::cut($e->getMessage()),
+        ]));
     }
 }

@@ -330,7 +330,7 @@ class ProcessManualDataJob extends Job implements ShouldQueue
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('ProcessManualDataJob bulk insert failed', ['error' => $e->getMessage()]);
-            return;
+            throw $e;  // the run fails (and alerts) instead of passing with no attendance written
         }
 
         // ── Resolve inserted IDs ──────────────────────────────────────────────
@@ -410,6 +410,27 @@ class ProcessManualDataJob extends Job implements ShouldQueue
             }
             foreach (array_chunk($leaveAchieveLogs, 500) as $chunk) {
                 EmployeeLeaveAchieveLog::insert($chunk);
+            }
+        }
+
+        // ── Old ERP: manual entry / approved correction (hr-admin sets old_erp_sync; CSV import doesn't)
+        if (!empty($this->payload['old_erp_sync'])) {
+            foreach (array_keys($idMapByEmpDate) as $employeeDateKey) {
+                if (!isset($manualPunchMap[$employeeDateKey])) {
+                    continue;
+                }
+                [$employeeUserId, $date] = explode('|', $employeeDateKey, 2);
+                $data = ['employee_user_id' => (int) $employeeUserId, 'date' => $date];
+                try {
+                    \Illuminate\Support\Facades\Queue::connection('rabbitmq')->push(
+                        new RabbitMQJob($data, 'oldErpAttendanceSync_queue'),
+                        '',
+                        'oldErpAttendanceSync_queue'
+                    );
+                } catch (\Throwable $e) {
+                    // old-erp:resync picks it up later
+                    Log::error('oldErpAttendanceSync_queue push failed', $data + ['error' => $e->getMessage()]);
+                }
             }
         }
     }

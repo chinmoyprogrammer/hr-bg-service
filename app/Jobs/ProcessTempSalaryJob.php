@@ -14,6 +14,7 @@ use App\Models\PayrollSalaryHead;
 use App\Models\PrProblemRegisterAccousedPerson;
 use App\Models\SalaryHead;
 use App\Models\User;
+use App\Support\RunTracker;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -28,6 +29,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
     use InteractsWithQueue, Queueable, SerializesModels;
 
     protected array $payload;
+
+    // seconds; overrides the worker's --timeout (salary for all employees runs long)
+    public $timeout = 600;
 
     // salary head per loan type
     private const LOAN_HEADS = [
@@ -692,6 +696,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     'created_at' => date('Y-m-d H:i:s'),
                 ];
             });
+        RunTracker::metric('employees', $PayrollSalarySheetTemp ? count($PayrollSalarySheetTemp) : 0);  // salary rows written
         if ($PayrollSalarySheetTemp && count($PayrollSalarySheetTemp) > 0) {
             DB::transaction(function () use (
                 $PayrollSalarySheetTemp,

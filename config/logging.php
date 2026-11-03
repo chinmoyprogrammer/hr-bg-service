@@ -17,6 +17,30 @@ return [
             'days' => (int) env('LOG_DAYS', 14),
         ],
 
+        // OldErpLoanSyncJob: storage/logs/old-erp-loan-sync-YYYY-MM-DD.log
+        'old_erp_loan_sync' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/old-erp-loan-sync.log'),
+            'level' => 'debug',
+            'days' => 90,
+        ],
+
+        // OldErpLateConsiderSyncJob: storage/logs/old-erp-late-consider-sync-YYYY-MM-DD.log
+        'old_erp_late_consider_sync' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/old-erp-late-consider-sync.log'),
+            'level' => 'debug',
+            'days' => 90,
+        ],
+
+        // OldErpAttendanceSyncJob: storage/logs/old-erp-attendance-sync-YYYY-MM-DD.log
+        'old_erp_attendance_sync' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/old-erp-attendance-sync.log'),
+            'level' => 'debug',
+            'days' => 90,
+        ],
+
         'stderr' => [
             'driver' => 'monolog',
             'handler' => Monolog\Handler\StreamHandler::class,

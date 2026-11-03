@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Runs</title>
+<!-- Job tracking dashboard (docs/job-failure-tracking-plan.html, Phase 4). No data in this file:
+     everything comes from /api/jobs/* with the user's ERP token, so it can move to the React app as is. -->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
+    --red: #c62828; --red-bg: #fdecea; --amber: #b26a00; --amber-bg: #fff4e0;
+    --green: #2e7d32; --green-bg: #e8f5e9; --gray-bg: #eef0f3; --accent: #1f5fbf; --tx: #6a3fb5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c323d;
+      --red: #ff8a80; --red-bg: #3a1f1f; --amber: #ffcc80; --amber-bg: #3a2e1a;
+      --green: #a5d6a7; --green-bg: #1d3320; --gray-bg: #262b35; --accent: #8ab4f8; --tx: #c3a6ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 18px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  main { padding: 16px 20px; display: grid; gap: 16px; max-width: 1500px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+  .muted { color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select, button, textarea { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  tbody tr.click { cursor: pointer; }
+  tbody tr.click:hover { background: var(--gray-bg); }
+  td.wrap { white-space: normal; max-width: 420px; overflow-wrap: anywhere; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--gray-bg); }
+  .red { background: var(--red-bg); color: var(--red); }
+  .amber { background: var(--amber-bg); color: var(--amber); }
+  .green { background: var(--green-bg); color: var(--green); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 16px; }
+  .kv b { color: var(--muted); font-weight: 500; margin-right: 6px; }
+  #detail { display: none; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .log { max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+  .log div { padding: 1px 8px; border-bottom: 1px solid var(--line); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+  .log .l-error, .log .l-critical, .log .l-alert, .log .l-emergency { background: var(--red-bg); }
+  .log .l-warning { background: var(--amber-bg); }
+  .log .l-tx { color: var(--tx); font-weight: 600; }
+  .log .l-notice { color: var(--muted); font-style: italic; }
+  .msg { margin-top: 8px; }
+  .hide { display: none !important; }
+  @media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Job runs</h1>
+  <div class="row">
+    <span id="who" class="muted"></span>
+    <input id="tokenInput" class="hide" type="password" placeholder="Access token (or internal:…)" size="34">
+    <button id="tokenSave" class="hide">Use token</button>
+    <button id="tokenChange">Change token</button>
+  </div>
+</header>
+<main>
+  <div id="authError" class="hide"></div>
+
+  <section>
+    <h2>Heartbeats</h2>
+    <div id="beats" class="chips"><span class="muted">Loading…</span></div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between"><h2>Jobs</h2><span id="summaryAt" class="muted"></span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Job</th><th>Last run</th><th>Last success</th><th>Last 24 h</th><th>Open alerts</th><th>Schedule</th></tr></thead>
+      <tbody id="jobs"></tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Runs</h2>
+    <div class="row" style="margin-bottom: 10px">
+      <select id="fJob"><option value="">All jobs</option></select>
+      <select id="fStatus">
+        <option value="problems">Problems</option>
+        <option value="">Any status</option>
+        <option value="failed,failed_retry_unsafe">Failed</option>
+        <option value="rolled_back,partial">Rolled back / partial</option>
+        <option value="completed_with_errors">Completed with errors</option>
+        <option value="missed">Missed</option>
+        <option value="lost,timed_out">Lost / timed out</option>
+        <option value="stuck">Stuck</option>
+        <option value="trigger_failed">Trigger failed</option>
+        <option value="queued,running,retrying">In flight</option>
+        <option value="success">Success</option>
+      </select>
+      <select id="fFlag"><option value="">Any flags</option><option>late</option><option>slow</option><option>zero_output</option><option>forced</option></select>
+      <label class="muted">From <input id="fFrom" type="date"></label>
+      <label class="muted">To <input id="fTo" type="date"></label>
+      <input id="fQ" type="search" placeholder="Error text or run uuid" size="22">
+      <button id="fApply" class="primary">Search</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>Job</th><th>Status</th><th>Flags</th><th>When</th><th>Took</th><th>Waited</th><th>Attempt</th><th>Source</th><th>Error</th></tr></thead>
+      <tbody id="runs"></tbody>
+    </table></div>
+    <div class="row" style="margin-top: 8px; justify-content: space-between">
+      <span id="runsInfo" class="muted"></span>
+      <span class="row"><button id="prev">Previous</button><button id="next">Next</button></span>
+    </div>
+  </section>
+
+  <section id="detail">
+    <div class="row" style="justify-content: space-between"><h2 id="dTitle"></h2><button id="dClose">Close</button></div>
+    <div id="dFields" class="grid2 kv"></div>
+    <div id="dActions" class="row" style="margin-top: 12px"></div>
+    <div id="dMsg" class="msg"></div>
+    <div id="dError" style="margin-top: 12px"></div>
+    <div id="dRelated" style="margin-top: 12px"></div>
+    <div style="margin-top: 14px">
+      <div class="row" style="justify-content: space-between; margin-bottom: 6px">
+        <h2 style="margin: 0">Log</h2>
+        <div id="dLevels" class="row"></div>
+      </div>
+      <div id="dLog" class="log"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const API = location.pathname.startsWith('/jobs-dashboard') ? '/api/hr-bg/jobs' : '/api/jobs';
+  const RED = ['failed', 'failed_retry_unsafe', 'rolled_back', 'timed_out', 'lost', 'trigger_failed', 'missed'];
+  const AMBER = ['completed_with_errors', 'partial', 'stuck'];
+  const PROBLEMS = [...RED, ...AMBER].join(',');
+  const LEVELS = ['error', 'warning', 'notice', 'info', 'debug', 'tx'];
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const store = { get(k) { try { return sessionStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v ? sessionStorage.setItem(k, v) : sessionStorage.removeItem(k); } catch {} } };
+
+  // The ERP front end keeps its tokens under auth_tokens (local or session storage, same origin via the gateway)
+  function erpToken() {
+    for (const s of [() => localStorage, () => sessionStorage]) {
+      try { const t = JSON.parse(s().getItem('auth_tokens') || 'null'); if (t && t.accessToken) return t.accessToken; } catch {}
+    }
+    return null;
+  }
+  const token = () => store.get('jobs_token') || erpToken();
+
+  async function api(path, opts = {}) {
+    const t = token();
+    const headers = { Accept: 'application/json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) };
+    if (t && t.startsWith('internal:')) headers['X-Internal-Token'] = t.slice(9); else if (t) headers.Authorization = 'Bearer ' + t;
+    const res = await fetch(API + path, { ...opts, headers });
+    let body = null;
+    try { body = await res.json(); } catch {}
+    if (res.status === 401 || res.status === 403) showAuth(res.status, body && body.message);
+    if (!res.ok) throw Object.assign(new Error((body && body.message) || res.statusText), { status: res.status });
+    $('authError').className = 'hide';
+    return body;
+  }
+
+  function showAuth(status, message) {
+    const box = $('authError');
+    box.className = 'badge ' + (status === 401 ? 'amber' : 'red');
+    box.textContent = (message || 'Not allowed') + (status === 401 ? ': sign in to the ERP in this browser, or paste an access token.' : '.');
+    showTokenInput(true);
+  }
+  function showTokenInput(show) {
+    $('tokenInput').classList.toggle('hide', !show);
+    $('tokenSave').classList.toggle('hide', !show);
+    $('tokenChange').classList.toggle('hide', show);
+  }
+  $('tokenChange').onclick = () => showTokenInput(true);
+  $('tokenSave').onclick = () => { store.set('jobs_token', $('tokenInput').value.trim()); $('tokenInput').value = ''; showTokenInput(false); refreshAll(); };
+  function renderWho() {
+    $('who').textContent = store.get('jobs_token') ? 'Using a pasted token' : (erpToken() ? 'Using your ERP sign-in' : 'Not signed in');
+  }
+
+  const tone = s => RED.includes(s) ? 'red' : AMBER.includes(s) ? 'amber' : s === 'success' ? 'green' : '';
+  const badge = s => `<span class="badge ${tone(s)}">${esc(s)}</span>`;
+  const flags = f => (f || []).map(x => `<span class="badge amber">${esc(x)}</span>`).join(' ');
+  const secs = ms => ms == null ? '' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
+  const ago = at => {
+    if (!at) return '';
+    const s = Math.round((Date.now() - new Date(at.replace(' ', 'T') + '+06:00')) / 1000);
+    return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
+  };
+  const when = r => r.started_at || r.queued_at || r.finished_at;
+
+  async function loadSummary() {
+    const data = await api('/summary');
+    $('beats').innerHTML = Object.entries(data.heartbeats).map(([name, age]) =>
+      `<span class="badge ${age > 180 ? 'red' : 'green'}" title="last beat ${age} s ago">${esc(name)} · ${age < 120 ? age + ' s' : Math.round(age / 60) + ' min'}</span>`
+    ).join('') || '<span class="muted">No heartbeats yet</span>';
+
+    const jobs = Object.entries(data.jobs);
+    const current = $('fJob').value;
+    $('fJob').innerHTML = '<option value="">All jobs</option>' + jobs.map(([j]) => `<option${j === current ? ' selected' : ''}>${esc(j)}</option>`).join('');
+    $('jobs').innerHTML = jobs.map(([job, j]) => {
+      const counts = Object.entries(j.counts_24h).sort((a, b) => b[1] - a[1]).map(([s, n]) => `<span class="badge ${tone(s)}">${esc(s)} ${n}</span>`).join(' ');
+      const alerts = j.open_alerts.map(a => `<span class="badge ${tone(a.kind) || 'amber'}" title="since ${esc(a.opened_at)}">${esc(a.kind)} ${a.occurrences}×</span>`).join(' ');
+      const last = j.last_run;
+      const sched = j.schedule ? (j.schedule.cron ? `<code>${esc(j.schedule.cron)}</code>` : 'on demand') + (j.schedule.enabled ? '' : ' <span class="badge">off</span>') : '';
+      return `<tr class="click" data-job="${esc(job)}"><td><b>${esc(job)}</b></td>
+        <td>${last ? badge(last.status) + ' ' + flags(last.flags) + ` <span class="muted">${ago(when(last))}</span>` : '<span class="muted">none in 7 days</span>'}</td>
+        <td class="muted">${ago(j.last_success_at)}</td><td class="wrap">${counts}</td><td class="wrap">${alerts}</td><td>${sched}</td></tr>`;
+    }).join('');
+    $('summaryAt').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  }
+  $('jobs').onclick = e => {
+    const tr = e.target.closest('tr[data-job]');
+    if (!tr) return;
+    $('fJob').value = tr.dataset.job;
+    $('fStatus').value = '';
+    page = 1;
+    loadRuns();
+  };
+
+  let page = 1;
+  async function loadRuns() {
+    const status = $('fStatus').value === 'problems' ? PROBLEMS : $('fStatus').value;
+    const q = new URLSearchParams({ page, per_page: 50 });
+    for (const [k, v] of [['job', $('fJob').value], ['status', status], ['flag', $('fFlag').value], ['from', $('fFrom').value], ['to', $('fTo').value], ['q', $('fQ').value.trim()]]) if (v) q.set(k, v);
+    const data = await api('/runs?' + q);
+    $('runs').innerHTML = data.data.map(r => `<tr class="click" data-id="${r.id}">
+      <td>${r.id}</td><td>${esc(r.job)}</td><td>${badge(r.status)}</td><td>${flags(r.flags)}</td>
+      <td title="${esc(when(r))}">${esc((when(r) || '').slice(0, 19))}</td><td>${secs(r.duration_ms)}</td><td>${secs(r.wait_ms)}</td>
+      <td>${r.attempt ? r.attempt + (r.max_attempts ? '/' + r.max_attempts : '') : ''}</td><td>${esc(r.trigger_source)}</td>
+      <td class="wrap">${esc((r.error_message || '').split('\n')[0].slice(0, 160))}</td></tr>`).join('')
+      || '<tr><td colspan="10" class="muted">No runs match.</td></tr>';
+    const pages = Math.max(1, Math.ceil(data.total / data.per_page));
+    $('runsInfo').textContent = `${data.total} runs · page ${data.page} of ${pages}`;
+    $('prev').disabled = page <= 1;
+    $('next').disabled = page >= pages;
+  }
+  $('fApply').onclick = () => { page = 1; loadRuns().catch(fail); };
+  $('prev').onclick = () => { page--; loadRuns().catch(fail); };
+  $('next').onclick = () => { page++; loadRuns().catch(fail); };
+  $('runs').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) openRun(tr.dataset.id).catch(fail); };
+
+  let shownLevels = new Set(LEVELS);
+  let current = null;
+  async function openRun(id) {
+    current = await api('/runs/' + id);
+    const r = current.run;
+    $('detail').style.display = 'block';
+    $('dTitle').innerHTML = `Run #${r.id} · ${esc(r.job)} ${badge(r.status)} ${flags(r.flags)}`;
+    const f = [
+      ['Class', r.job_class], ['Queue', r.queue], ['Source', r.trigger_source + (r.triggered_by ? ' (user ' + r.triggered_by + ')' : '')],
+      ['Attempt', r.attempt ? r.attempt + '/' + (r.max_attempts || '?') : ''], ['Queued', r.queued_at], ['Started', r.started_at], ['Finished', r.finished_at],
+      ['Waited', secs(r.wait_ms)], ['Took', secs(r.duration_ms)], ['Transactions', `${r.tx_committed} committed, ${r.tx_rolled_back} rolled back`],
+      ['Writes', `${r.writes_kept} kept, ${r.writes_undone} undone`], ['HTTP calls', `${r.http_calls} (${r.http_failed} failed)`],
+      ['Log', `${r.log_lines} lines, ${r.errors} errors, ${r.warnings} warnings, ${r.log_dropped} dropped`], ['Worker', (r.worker_host || '') + (r.worker_pid ? ' / ' + r.worker_pid : '')],
+      ['Metrics', r.metrics ? JSON.stringify(r.metrics) : ''], ['Run uuid', r.run_uuid], ['Parent run', r.parent_run_id ? '#' + r.parent_run_id : ''],
+    ];
+    $('dFields').innerHTML = f.filter(([, v]) => v).map(([k, v]) => `<div><b>${k}</b>${esc(v)}</div>`).join('')
+      + (r.payload != null ? `<div style="grid-column: 1 / -1"><b>Payload</b><pre>${esc(JSON.stringify(r.payload, null, 1))}</pre></div>` : '');
+    $('dError').innerHTML = r.error_message ? `<b>${esc(r.error_class || 'Error')}</b><pre>${esc(r.error_message)}</pre>`
+      + (r.error_trace ? `<details><summary class="muted">Trace</summary><pre>${esc(r.error_trace)}</pre></details>` : '') : '';
+    $('dRelated').innerHTML = current.related.length ? '<b class="muted">Related runs</b> ' + current.related.map(x =>
+      `<a href="#" data-open="${x.id}">#${x.id}</a> ${badge(x.status)} <span class="muted">${esc(x.trigger_source)}</span>`).join(' · ') : '';
+    renderActions(r);
+    $('dMsg').textContent = '';
+    renderLog();
+    $('detail').scrollIntoView({ behavior: 'smooth' });
+  }
+  $('dRelated').onclick = e => { const a = e.target.closest('[data-open]'); if (a) { e.preventDefault(); openRun(a.dataset.open).catch(fail); } };
+  $('dClose').onclick = () => { $('detail').style.display = 'none'; current = null; };
+
+  function renderLog() {
+    const log = current.log;
+    $('dLevels').innerHTML = LEVELS.map(l => `<label class="muted"><input type="checkbox" data-level="${l}"${shownLevels.has(l) ? ' checked' : ''}> ${l}</label>`).join(' ');
+    if (!log) { $('dLog').innerHTML = '<div class="muted">No log kept for this run (none written, or pruned after 7 days on success).</div>'; return; }
+    const lines = log.filter(l => shownLevels.has(['critical', 'alert', 'emergency'].includes(l.l) ? 'error' : l.l));
+    $('dLog').innerHTML = lines.map(l => `<div class="l-${esc(l.l)}"><span class="muted">${esc(l.t)}</span> ${l.l === 'tx' ? '' : '<b>' + esc(l.l) + '</b> '}${esc(l.m)}`
+      + (l.n > 1 ? ` <span class="badge">×${l.n}</span>` : '') + (l.c ? ` <span class="muted">${esc(typeof l.c === 'string' ? l.c : JSON.stringify(l.c))}</span>` : '') + '</div>').join('')
+      || '<div class="muted">No lines at the selected levels.</div>';
+  }
+  $('dLevels').onchange = e => { const l = e.target.dataset.level; if (!l) return; e.target.checked ? shownLevels.add(l) : shownLevels.delete(l); renderLog(); };
+
+  function renderActions(r) {
+    const a = [];
+    if (['failed', 'failed_retry_unsafe', 'rolled_back', 'partial', 'completed_with_errors', 'timed_out', 'lost'].includes(r.status)) {
+      a.push(`<button class="primary" data-act="retry">Retry</button>`);
+      if (r.status === 'failed_retry_unsafe') a.push(`<label class="badge red"><input type="checkbox" id="aForce"> It committed ${r.writes_kept} write(s); I checked the data, retry anyway</label>`);
+    }
+    if (r.status === 'trigger_failed') a.push(`<button class="primary" data-act="replay">Replay trigger</button>`);
+    if (r.status === 'missed') a.push(`<button class="primary" data-act="run-now">Run now (catch-up)</button>`);
+    $('dActions').innerHTML = a.join(' ');
+  }
+  $('dActions').onclick = async e => {
+    const act = e.target.dataset.act;
+    if (!act || !current) return;
+    const r = current.run;
+    const force = $('aForce') && $('aForce').checked ? '?force=1' : '';
+    const path = act === 'run-now' ? `/missed/${r.id}/run-now` : `/runs/${r.id}/${act}${force}`;
+    if (!confirm(`${act} run #${r.id} (${r.job})?`)) return;
+    e.target.disabled = true;
+    try {
+      const res = await api(path, { method: 'POST', body: '{}' });
+      $('dMsg').innerHTML = `<span class="badge green">${esc(res.message)}</span>` + (res.run_id ? ` <a href="#" data-open="${res.run_id}">open #${res.run_id}</a>` : '');
+      setTimeout(() => { loadRuns().catch(fail); loadSummary().catch(fail); }, 1500);
+    } catch (err) {
+      $('dMsg').innerHTML = `<span class="badge ${err.status === 403 ? 'red' : 'amber'}">${esc(err.message)}</span>`;
+    } finally {
+      e.target.disabled = false;
+    }
+  };
+  $('dMsg').onclick = e => { const a = e.target.closest('[data-open]'); if (a) { e.preventDefault(); openRun(a.dataset.open).catch(fail); } };
+
+  function fail(err) { if (err.status !== 401 && err.status !== 403) console.error(err); }
+  function refreshAll() { renderWho(); loadSummary().catch(fail); loadRuns().catch(fail); }
+
+  $('fFrom').value = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  refreshAll();
+  setInterval(() => loadSummary().catch(fail), 30000);
+})();
+</script>
+</body>
+</html>
