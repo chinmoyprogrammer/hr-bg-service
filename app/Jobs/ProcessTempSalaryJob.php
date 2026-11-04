@@ -205,7 +205,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $absentDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 0)->count() ?? 0; 
                 $weekendDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 17)->count() ?? 0; 
                 $holidayDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 9)->count() ?? 0; 
-                $paidLeaveDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 8)->count() ?? 0; 
+                // Special Leave (24) is paid like leave; it is kept in summary type '8', never as type '24' (that is payable days)
+                $paidLeaveDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [8, 24])->count() ?? 0;
 
                 //.... extract deductable late days, weekends, holidays, paid leave, absent days
                 $late_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status',2)->count() ?? 0;

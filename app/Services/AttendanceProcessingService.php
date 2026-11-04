@@ -11,7 +11,9 @@ use App\Models\LeaveApplicationDetail;
 use App\Models\PayrollAccruedAllowanceIncome;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Psy\Readline\Hoa\Console;
 
 use function calculateOtHours;
@@ -1070,6 +1072,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         int $employeeUserId,
         string $date, string $now, array $statuses
     ): array {
+        $statuses = $this->applyApprovedSpecialLeave($employeeUserId, $date, $statuses);
         $rows = [];
         foreach ($statuses as $status) {
             $rows[] = [
@@ -1083,6 +1086,39 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             ];
         }
         return $rows;
+    }
+
+    /**
+     * Special Leave (SPL, 24) is approved in hr-admin-backend on an absent day (0 / 15) and kept in
+     * employee_special_leaves. Every job that rebuilds a day comes through here, so an approved SPL
+     * is re-applied when the day is still absent. Present, late or leave on the day wins over SPL.
+     */
+    private function applyApprovedSpecialLeave(int $employeeUserId, string $date, array $statuses): array
+    {
+        static $tableExists = null; // the table comes with hr-admin-backend's migration; never break attendance before it exists
+        $absentCodes = [0, 15];
+
+        if (!array_intersect($statuses, $absentCodes) || array_intersect($statuses, [1, 2, 8])) {
+            return $statuses;
+        }
+        $tableExists ??= Schema::hasTable('employee_special_leaves');
+        if (!$tableExists) {
+            return $statuses;
+        }
+
+        $approved = DB::table('employee_special_leaves')
+            ->where('employee_user_id', $employeeUserId)
+            ->where('leave_date', $date)
+            ->where('acceptance_status', 1) // approved
+            ->whereNull('deleted_at')
+            ->exists();
+        if (!$approved) {
+            return $statuses;
+        }
+
+        $statuses = array_values(array_diff($statuses, $absentCodes));
+        $statuses[] = 24; // Special Leave
+        return $statuses;
     }
 
     private function makeRowKey(
