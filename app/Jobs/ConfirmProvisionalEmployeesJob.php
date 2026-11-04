@@ -49,22 +49,6 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
                     $q->whereNotNull('provisioner_days')
                         ->whereNull('confirmation_date')
                         ->whereRaw('DATEDIFF(?, joining_date) >= provisioner_days', [$targetDate]);
-                })
-                // regular employee whose leave start (joining + provisioner days) came this year but has no leave yet,
-                // e.g. the start was still ahead when hr-admin created them
-                ->orWhere(function ($q) use ($targetDate) {
-                    $year = substr($targetDate, 0, 4);
-                    $q->where('employee_type_id', self::REGULAR)
-                        ->whereNotNull('leave_policy_id')
-                        ->whereNull('deleted_at')
-                        ->whereRaw('DATE_ADD(joining_date, INTERVAL COALESCE(provisioner_days, 0) DAY) BETWEEN ? AND ?', ["$year-01-01", $targetDate])
-                        ->whereNotExists(function ($b) use ($year) {
-                            $b->from('employee_leave_balances')
-                                ->whereColumn('employee_leave_balances.employee_user_id', 'employee_official_information.employee_user_id')
-                                ->where('employee_leave_balances.leave_head_id', '<>', 6) // 6 = unpaid leave
-                                ->where('employee_leave_balances.fiscal_year', $year)
-                                ->whereNull('employee_leave_balances.deleted_at');
-                        });
                 });
             })
             ->get([
@@ -97,7 +81,8 @@ class ConfirmProvisionalEmployeesJob extends Job implements ShouldQueue
                     DB::table('users')->where('id', $employee->employee_user_id)->update(['employee_type_id' => self::REGULAR]);
                 }
                 $employee->save();
-                // only regular employees get paid leave; other types keep the unpaid row hr-admin gave them
+                // only regular employees get paid leave; other types keep the unpaid row hr-admin gave them.
+                // runs once per employee: this save stops them matching, so deleted balances are not re-created
                 if ($employee->employee_type_id == self::REGULAR) {
                     $this->assignLeaveBalanceToEmployee($employee);
                 }
