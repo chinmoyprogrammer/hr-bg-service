@@ -57,7 +57,7 @@ class FiscalYearClosingJob extends Job implements ShouldQueue
             foreach ($employees as $employee) {
                 $details = optional($employee->hasLeavePolicy)->hasDetail ?? collect();
                 // paid leave only for regular staff whose leave start (joining + provisioner days) is on/before 1 Jan;
-                // a later start gets its prorated leave from ConfirmProvisionalEmployeesJob on that day, others keep unpaid only
+                // this job is the only automatic source of paid leave: a later start or other type keeps unpaid only until the next closing, unless HR assigns it
                 $startsLater = $employee->joining_date
                     && Carbon::parse($employee->joining_date)->addDays((int) $employee->provisioner_days)->gt(Carbon::create($newYear, 1, 1));
                 if ($employee->employee_type_id != 69 || $startsLater) { // 69 = regular
