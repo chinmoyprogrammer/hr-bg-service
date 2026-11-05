@@ -107,13 +107,17 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             ->get()
             ->groupBy('employee_user_id');
 
-        $publicHolidays = Holiday::whereBetween('date', [$startBoundary, $endBoundary])
-            ->whereNull('employee_user_id')
+        // Public holidays are stored per employee; type 8 is the weekend.
+        $publicHolidaysByEmp = Holiday::whereIn('employee_user_id', $this->employeeUserIds)
+            ->whereBetween('date', [$startBoundary, $endBoundary])
+            ->where('holiday_type_id', '<>', 8)
             ->get()
-            ->keyBy('date');
+            ->groupBy('employee_user_id')
+            ->map(fn($c) => $c->keyBy('date'));
 
         $employeeHolidaysByEmp = Holiday::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereBetween('date', [$startBoundary, $endBoundary])
+            ->where('holiday_type_id', 8)
             ->get()
             ->groupBy('employee_user_id')
             ->map(fn($c) => $c->keyBy('date'));
@@ -210,7 +214,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             foreach ($empDates as $date) {
                 $shiftId       = $row->shift_id ?? Shift::find(1)->id;
                 $shift         = $shifts->get($shiftId);
-                $publicHoliday = $publicHolidays->get($date);
+                $publicHoliday = optional($publicHolidaysByEmp->get($row->employee_user_id))->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                 
 
