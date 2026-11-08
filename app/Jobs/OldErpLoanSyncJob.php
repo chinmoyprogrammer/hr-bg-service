@@ -50,6 +50,12 @@ class OldErpLoanSyncJob extends Job
             return;
         }
 
+        // POST /loans/import: these balances came from the old ERP, never send them back
+        if (strpos((string) $loan->comments, 'Opening balance imported from old ERP') === 0) {
+            $this->log('info', 'skipped: uploaded opening balance');
+            return;
+        }
+
         $from = env('OLD_ERP_LOAN_SYNC_FROM');
         if (!$from) {
             $this->log('warning', 'sync disabled: OLD_ERP_LOAN_SYNC_FROM is not set');

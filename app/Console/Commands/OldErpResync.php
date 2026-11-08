@@ -28,6 +28,7 @@ class OldErpResync extends Command
         // loans: open ones (payments / pauses don't always touch the loan row) + any changed lately
         $loanIds = !env('OLD_ERP_LOAN_SYNC_FROM') ? [] : DB::table('payroll_salary_advance_n_loans')
             ->where('created_at', '>=', env('OLD_ERP_LOAN_SYNC_FROM'))
+            ->where(fn ($q) => $q->whereNull('comments')->orWhere('comments', 'not like', 'Opening balance imported from old ERP%'))
             ->where(fn ($q) => $q->where(fn ($open) => $open->whereNull('deleted_at')
                     ->whereNotIn('status', ['closed', 'written_off', 'restructured', 'rejected']))
                 ->orWhere('updated_at', '>=', $since)
