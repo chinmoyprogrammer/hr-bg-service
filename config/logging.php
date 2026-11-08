@@ -33,6 +33,14 @@ return [
             'days' => 90,
         ],
 
+        // OldErpHolidaySyncJob: storage/logs/old-erp-holiday-sync-YYYY-MM-DD.log
+        'old_erp_holiday_sync' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/old-erp-holiday-sync.log'),
+            'level' => 'debug',
+            'days' => 90,
+        ],
+
         // OldErpAttendanceSyncJob: storage/logs/old-erp-attendance-sync-YYYY-MM-DD.log
         'old_erp_attendance_sync' => [
             'driver' => 'daily',

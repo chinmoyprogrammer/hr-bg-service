@@ -36,10 +36,10 @@ OLD_ERP_SYNC_ENABLED="${HR_BG_OLD_ERP_SYNC_ENABLED:-1}"
 if [ "$OLD_ERP_SYNC_ENABLED" = "1" ] || [ "$OLD_ERP_SYNC_ENABLED" = "true" ]; then
   (
     while true; do
-      echo "[old-erp-sync] starting: queue=oldErpLoanSync_queue,oldErpLateConsiderSync_queue,oldErpAttendanceSync_queue"
+      echo "[old-erp-sync] starting: queue=oldErpLoanSync_queue,oldErpLateConsiderSync_queue,oldErpHolidaySync_queue,oldErpAttendanceSync_queue"
       set +e
       php -d opcache.enable_cli=0 artisan queue:work rabbitmq \
-        --queue=oldErpLoanSync_queue,oldErpLateConsiderSync_queue,oldErpAttendanceSync_queue \
+        --queue=oldErpLoanSync_queue,oldErpLateConsiderSync_queue,oldErpHolidaySync_queue,oldErpAttendanceSync_queue \
         --sleep=1 --tries=5 --backoff=30,120,600,1800 --timeout=120 --max-jobs=100 \
         --no-interaction -vvv
       EXIT_CODE=$?
