@@ -347,7 +347,10 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     $meal_rate = $user->hasOfficialInformation->per_meal_cost == 0 || $user->hasOfficialInformation->per_meal_cost == null ? $meal_rate : $user->hasOfficialInformation->per_meal_cost;
 
                     $total_meal_cost_this_month = ($total_present_days - $mealPauseCount+$weekendDutyDays) * $meal_rate;
-                    Log::info('total_meal_cost_this_month', ['present_days'=>$total_present_days,'meal_cost'=>$total_meal_cost_this_month]);
+                    Log::info('total_meal_cost_this_month', ['present_days'=>$total_present_days,
+                            'meal_cost'=>$total_meal_cost_this_month,
+                            'mealPauseCount'=>$mealPauseCount,
+                            'weekendDutyDays'=>$weekendDutyDays  ]);
 
                     if ($total_meal_cost_this_month > 0) {
                         $total_deductable += $total_meal_cost_this_month;
