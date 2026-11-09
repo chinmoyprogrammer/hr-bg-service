@@ -202,7 +202,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave->count() ?? 0;
                 $late_deduction_policy = $user->hasOfficialInformation->hasLateDeductionPolicy;
                 $late_attendance_consideration_requests = $user->hasOfficialInformation->hasLateAttendanceConsiderationRequests?->first()->consider_days ?? 0;
-                $absentDays = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 0)->count() ?? 0; 
+                $absentDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [0])->count() ?? 0; 
+                $halfDayAbsentDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [3,5 ])->count() ?? 0; 
                 $weekendDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [17, 20])->count() ?? 0; 
                 $holidayDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [9])->count() ?? 0; 
                 // Special Leave (24) is paid like leave; it is kept in summary type '8', never as type '24' (that is payable days)
@@ -221,11 +222,14 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                                 - $unpaidLeaveDeduction 
                                 + $late_attendance_consideration_requests 
                                 - $deductable_late_days 
-                                - $absentDays 
+                                - $absentDays
+                                - ($halfDayAbsentDays * 0.5)
                                 + $weekendDays 
                                 + $holidayDays 
                                 + $paidLeaveDays
                                 ;
+
+                $absentDays = $absentDays + ($halfDayAbsentDays * 0.5);
                 $attendance_summary_value_list = [
                     ['type'=>'0', 'value'=>$absentDays.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
                     ['type'=>'1', 'value'=>$total_present_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
