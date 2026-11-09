@@ -464,7 +464,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     } elseif ($user->hasOfficialInformation->ait_deduction_basis == 'gross') {
                         $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
                     } else {
-                        $ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
+                        //$ait_amount = ($user->hasOfficialInformation->ait_ptc / 100) * $user->hasOfficialInformation->gross_salary;
+
+                        $ait_amount = $user->hasOfficialInformation->ait_amount;// temporary calculation
                     }
 
                     Log::info("AIT ait_amount: $ait_amount");
