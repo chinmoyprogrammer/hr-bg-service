@@ -995,7 +995,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day);
 
         $condition4 = (strtotime($first->punch_datetime) > strtotime($date . ' ' . $shift->first_half_day) &&  strtotime($first->punch_datetime) < strtotime($date . ' ' . $shift->clock_out_start_time))
-            && $last && strtotime($last->punch_datetime) <= strtotime($date . ' ' . $shift->clock_out . ' +30 minutes');
+            // stayed till clock_out = first-half absent only (applyFirstHalfDayStatus), never full absent
+            && $last && strtotime($last->punch_datetime) < strtotime($date . ' ' . $shift->clock_out);
 
         if ($condition1 || $condition2 || $condition3 || $condition4) {
             $statusesForLog[] = 0;  // Absent
