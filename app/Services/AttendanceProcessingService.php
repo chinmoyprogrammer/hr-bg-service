@@ -613,7 +613,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             return;
         }
 
-        $punchTime   = strtotime($first->punch_datetime);
+        // whole minutes only: a device punch at 09:00:35 is 09:00, the same as the screen and the old ERP show
+        $punchTime   = strtotime(date('Y-m-d H:i:00', strtotime($first->punch_datetime)));
         if($this->isAbsentInFirstHalf){
             $secondHalfStart = $shift->second_half_day ?? date('H:i:s', strtotime($shift->first_half_day . ' + 1.5 hours'));
             $graceEnd    = strtotime($date . ' ' . $secondHalfStart . " +$grace minutes");
