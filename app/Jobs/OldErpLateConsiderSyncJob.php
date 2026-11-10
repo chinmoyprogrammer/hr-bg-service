@@ -43,6 +43,9 @@ class OldErpLateConsiderSyncJob extends Job
     public function handle(): void
     {
         $this->requestId = (int) ($this->payload['late_consider_id'] ?? 0);
+        if ($this->syncDisabled()) {
+            return;
+        }
         $req = DB::table('late_attendance_consideration_requests')->find($this->requestId);   // incl. soft deleted
         if (!$req) {
             $this->log('warning', 'request not found');

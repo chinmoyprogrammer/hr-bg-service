@@ -481,3 +481,20 @@ if (!function_exists('sql_date'))
         return $ts === false ? null : date('Y-m-d', $ts);
     }
 }
+
+if (!function_exists('old_erp_sync_enabled'))
+{
+    /**
+     * Per-resource old ERP sync switch: business_settings SYNC_STATUS row with
+     * setting_name = the resource (apiEmployees, apiLeaves, ...), value 1 = on, 0 = off.
+     * No row = on. Read from the DB every time, so a change works at once.
+     */
+    function old_erp_sync_enabled(string $resource): bool
+    {
+        return \Illuminate\Support\Facades\DB::table('business_settings')
+            ->where('settings_key', 'SYNC_STATUS')
+            ->where('setting_name', $resource)
+            ->whereNull('deleted_at')
+            ->value('value') !== '0';
+    }
+}
