@@ -42,6 +42,9 @@ class OldErpAttendanceSyncJob extends Job
     {
         $this->employeeUserId = (int) ($this->payload['employee_user_id'] ?? 0);
         $this->date = (string) ($this->payload['date'] ?? '');
+        if ($this->syncDisabled()) {
+            return;
+        }
 
         $from = substr((string) env('OLD_ERP_ATTENDANCE_SYNC_FROM'), 0, 7);
         if (!$from) {

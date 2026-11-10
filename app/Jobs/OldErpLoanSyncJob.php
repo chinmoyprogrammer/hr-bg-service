@@ -44,6 +44,9 @@ class OldErpLoanSyncJob extends Job
     public function handle(): void
     {
         $this->loanId = (int) ($this->payload['loan_id'] ?? 0);
+        if ($this->syncDisabled()) {
+            return;
+        }
         $loan = DB::table('payroll_salary_advance_n_loans')->find($this->loanId);
         if (!$loan) {
             $this->log('warning', 'loan not found');

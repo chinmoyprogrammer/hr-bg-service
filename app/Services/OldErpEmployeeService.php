@@ -113,6 +113,12 @@ class OldErpEmployeeService
      */
     private function postToOldErp(string $action, string $idName, $id, string $endpoint, array $payload, int $timeout = 30): void
     {
+        $resource = explode('/', ltrim($endpoint, '/'))[0];   // '/apiEmployees/save' => 'apiEmployees'
+        if (!old_erp_sync_enabled($resource)) {
+            Log::warning("Old ERP {$action} skipped: SYNC_STATUS {$resource} = 0", [$idName => $id]);
+            return;
+        }
+
         $apiKey = env('OLD_ERP_API_KEY');
         if (empty($apiKey)) {
             Log::warning("Old ERP {$action} skipped: OLD_ERP_API_KEY is not set", [$idName => $id]);

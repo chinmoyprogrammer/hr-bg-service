@@ -11,6 +11,16 @@ use Illuminate\Support\Facades\Log;
  */
 trait OldErpApi
 {
+    /** true (logged) when business_settings SYNC_STATUS for RESOURCE is 0; the job then does nothing. */
+    private function syncDisabled(): bool
+    {
+        if (old_erp_sync_enabled(static::RESOURCE)) {
+            return false;
+        }
+        $this->log('warning', 'skipped: SYNC_STATUS ' . static::RESOURCE . ' = 0');
+        return true;
+    }
+
     /** view; null when the old ERP has no such record. */
     private function get(array $query): ?array
     {
