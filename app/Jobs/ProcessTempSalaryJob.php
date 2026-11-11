@@ -166,6 +166,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 'hasOfficialInformation.hasLateAttendanceConsiderationRequests' => function ($query) use ($payload) {
                     $query->whereNull('deleted_at')
                     ->whereNull('deleted_by')
+                    ->where('approval_status', 1) // only approved requests count
                     ->where('month', date('m', strtotime($payload['salary_calculate_month_year'])))
                     ->where('year', date('Y', strtotime($payload['salary_calculate_month_year'])))
                     ;
@@ -219,15 +220,17 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
                 $payable_days = $total_present_days 
-                                - $unpaidLeaveDeduction 
-                                + $late_attendance_consideration_requests 
-                                - $deductable_late_days 
-                                - $absentDays
+                                - $unpaidLeaveDeduction
+                                // consider days only cancel a late deduction, never add days on top
+                                - max($deductable_late_days - $late_attendance_consideration_requests, 0)
+                                // absent days are not in present days, so they are simply not paid -- no subtraction
                                 - ($halfDayAbsentDays * 0.5)
-                                + $weekendDays 
-                                + $holidayDays 
+                                + $weekendDays
+                                + $holidayDays
                                 + $paidLeaveDays
                                 ;
+                // payable days can never exceed the days in the month
+                $payable_days = min($payable_days, (int) date('t', strtotime($payload['salary_calculate_month_year'])));
 
                 $absentDays = $absentDays + ($halfDayAbsentDays * 0.5);
                 $attendance_summary_value_list = [
@@ -291,6 +294,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     if ($late_deduction_policy && $late_deduction_policy->deduction_basis == 'Minutes') {
                         $late_deductable_amount = $salary * ($deductable_late_minutes / 60);
                     }
+                    $late_deductable_amount = round($late_deductable_amount); // whole taka, like PF
 
                     //... need to check that late deduction amount already in "payroll_pre_salary_sheet_deductions" table or not
                     $existedLateDeductionRows = $user
@@ -320,8 +324,9 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         }
                         else
                         {
-                            $total_deductable += $existedLateDeductionRows->amount;
-                            $late_deductable_amount = $existedLateDeductionRows->amount;
+                            // reuse the saved row; read it from the row, not the collection (that throws), whole taka like PF
+                            $late_deductable_amount = round((float) $existedLateDeductionRows->first()->amount);
+                            $total_deductable += $late_deductable_amount;
                         }
 
                         $PayrollSalarySheetHeadsTemp[] = [
@@ -387,7 +392,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                 //...... calculate absent deductions
                 
-                $absentDeduction = $absentDays * $gross_salary_of_1_day; // $basic_salary_of_1_day
+                $absentDeduction = round($absentDays * $gross_salary_of_1_day); // whole taka, like PF // $basic_salary_of_1_day
                 if($absentDeduction > 0){
                     $total_deductable += $absentDeduction;
 
@@ -433,7 +438,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave->count();
                     if($unpaidLeaveDeduction > 0)
                     {
-                        $total_deductable += $unpaidLeaveDeduction * $gross_salary_of_1_day; // $basic_salary_of_1_day
+                        $total_deductable += round($unpaidLeaveDeduction * $gross_salary_of_1_day); // whole taka, like PF // $basic_salary_of_1_day
 
                     }
                 }
@@ -512,11 +517,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     // $employeePfPercentage = SalaryHead::where('id', 12)->first()->percentage;
                     // $employeePfAmount = $user->hasOfficialInformation->gross_salary * ($employeePfPercentage / 100);
                     $employeePfAmount = $user->hasOfficialInformation->hasSalaryStructure?->where('salary_head_id', 12)->first()?->amount ?? 0;
-                    if ($employeePfAmount > $employeePfPolicyMaxDeduction) {
-                        $pf_amount = $employeePfPolicyMaxDeduction;
-                    } else {
-                        $pf_amount = $employeePfAmount;
-                    }
+                    // PF is always deducted as a whole taka
+                    $pf_amount = round(min((float) $employeePfAmount, (float) $employeePfPolicyMaxDeduction));
 
                     Log::info("pf_amount",[$pf_amount]);
 
