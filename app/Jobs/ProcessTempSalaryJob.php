@@ -433,15 +433,24 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         where('employee_user_id', $user->id)->where('type', 'unpaid_leave')
                         ;
 
-                if($existedUnPaidDeductionRows->count() > 0){
-                   
-                }else{
-                    $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave->count();
-                    if($unpaidLeaveDeduction > 0)
-                    {
-                        $total_deductable += round($unpaidLeaveDeduction * $gross_salary_of_1_day); // whole taka, like PF // $basic_salary_of_1_day
+                // a saved unpaid_leave row wins; otherwise unpaid leave days x one day's gross, whole taka like PF
+                $unpaidLeaveAmount = $existedUnPaidDeductionRows->count() > 0
+                    ? round((float) $existedUnPaidDeductionRows->first()->amount)
+                    : round($user->hasOfficialInformation->hasUnpaidLeave->count() * $gross_salary_of_1_day); // $basic_salary_of_1_day
+                if ($unpaidLeaveAmount > 0) {
+                    $total_deductable += $unpaidLeaveAmount;
 
-                    }
+                    // head row so the amount shows in the sheet's breakdown (Others), not only in the total
+                    $PayrollSalarySheetHeadsTemp[] = [
+                        'salary_sheet_temp_id' => null,
+                        'employee_id_for_mapping' => $user->id,
+                        'employee_user_id' => $user->id,
+                        'head_id' => 19, //unpaid leave
+                        'value' => $unpaidLeaveAmount,
+                        'is_earning' => 0,
+                        'created_user_id' => getUserId(), // todo:: need a system user id
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ];
                 }
 
 
