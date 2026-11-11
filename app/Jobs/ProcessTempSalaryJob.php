@@ -217,12 +217,13 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 //.... extract deductable late days, weekends, holidays, paid leave, absent days
                 $late_days = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status',2)->count() ?? 0;
                 $deductable_late_days = (int) ($late_days / ($late_deduction_policy->max_late_days+1));
+                // consider days only cancel a late deduction, never add days on top
+                $net_deductable_late_days = max($deductable_late_days - $late_attendance_consideration_requests, 0);
 
 
                 $payable_days = $total_present_days 
                                 - $unpaidLeaveDeduction
-                                // consider days only cancel a late deduction, never add days on top
-                                - max($deductable_late_days - $late_attendance_consideration_requests, 0)
+                                // late is NOT cut from payable days; it is deducted once, as the late head (15) below
                                 // absent days are not in present days, so they are simply not paid -- no subtraction
                                 - ($halfDayAbsentDays * 0.5)
                                 + $weekendDays
@@ -265,7 +266,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 
                 
                 
-                if ($deductable_late_days > 0) {
+                if ($net_deductable_late_days > 0) {
                     $deductable_late_minutes = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 2)->sum(function ($log) {
                         if ($log->attendance?->shift_start_time && $log->in_time) {
                             $shiftStart = \Carbon\Carbon::parse($log->attendance->shift_start_time);
@@ -288,7 +289,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     }
 
                     if ($late_deduction_policy && $late_deduction_policy->deduction_basis == 'Day') {
-                        $late_deductable_amount = $salary * $deductable_late_days;
+                        $late_deductable_amount = $salary * $net_deductable_late_days;
                     }
 
                     if ($late_deduction_policy && $late_deduction_policy->deduction_basis == 'Minutes') {
