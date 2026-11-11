@@ -881,18 +881,26 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
     // get cash , bank , mfs amount
     private function getCashBankMfsAmount($data, $salaryPayable)
     {
-        $cashLimit = max(0, (float) ($data->cash_pay_amount ?? 0));
         $bankLimit = max(0, (float) ($data->bank_pay_amount ?? 0));
         $remaining = max(0, round((float) $salaryPayable, 2));
+        $cash = $bank = $mfs = 0;
 
-        // first pay cash , if some amount rest after cash pay max of bank, after bank fills rest will go to mfs
-        $cash = min($cashLimit, $remaining);
-        $remaining = round($remaining - $cash, 2);
-
-        $bank = min($bankLimit, $remaining);
-        $remaining = round($remaining - $bank, 2);
-
-        $mfs = $remaining;
+        // payment_modes: 1 Cash, 2 Bank, 3 Mobile Payment, 4 Bank + Cash
+        switch ((int) ($data->salary_payment_mode ?? 1)) {
+            case 2:
+                $bank = $remaining;
+                break;
+            case 3:
+                $mfs = $remaining;
+                break;
+            case 4:
+                // deductions come off cash first, then bank: bank keeps its set amount while net covers it
+                $bank = min($bankLimit, $remaining);
+                $cash = round($remaining - $bank, 2);
+                break;
+            default:
+                $cash = $remaining;
+        }
 
         return [
             'cash' => round($cash, 2),
