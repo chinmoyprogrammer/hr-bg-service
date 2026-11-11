@@ -184,7 +184,7 @@ class ActivatePfPolicyJob extends Job implements ShouldQueue
                     $base = (float) $employee->gross_salary;
                 }
 
-                $amount = round(min($base * $percentage / 100, $maxDeduction), 2);
+                $amount = round(min($base * $percentage / 100, $maxDeduction)); // PF is always a whole taka
 
                 // already in sync: exactly one live PF row with the same values
                 if ($pfRows->count() === 1) {
