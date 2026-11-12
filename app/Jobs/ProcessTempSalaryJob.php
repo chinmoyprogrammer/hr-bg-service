@@ -203,11 +203,23 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
                 //... calculate payable days
-                $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave->count() ?? 0;
+                // a half-day unpaid leave (first_second_half 4 = 1st half, 6 = 2nd half) is half a day, not a full one
+                $unpaidLeaveDeduction = $user->hasOfficialInformation->hasUnpaidLeave
+                    ->sum(fn ($d) => in_array((int) $d->first_second_half, [4, 6]) ? 0.5 : 1);
                 $late_deduction_policy = $user->hasOfficialInformation->hasLateDeductionPolicy;
                 $late_attendance_consideration_requests = $user->hasOfficialInformation->hasLateAttendanceConsiderationRequests?->first()->consider_days ?? 0;
                 $absentDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [0])->count() ?? 0; 
-                $halfDayAbsentDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [3,5 ])->count() ?? 0; 
+                // half-day statuses: 3/5 = half absent, 4/6 = approved half leave
+                $halfDayAbsentDays = 0; // punched days: the absent half is cut from the full Present day
+                $halfLeaveNoPunch  = 0; // no-punch days: each approved half leave is a paid half day
+                $halfAbsentNoPunch = 0; // no-punch days without status 0: absent half, for the summary only
+                foreach ($user->hasOfficialInformation->attendanceLogs?->groupBy('attendance_date') ?? [] as $dayLogs) {
+                    $st = $dayLogs->pluck('attendance_status')->map(fn ($s) => (int) $s);
+                    $halfAbsent = $st->intersect([3, 5])->count();
+                    if ($st->contains(1)) { $halfDayAbsentDays += $halfAbsent; continue; }
+                    $halfLeaveNoPunch += $st->intersect([4, 6])->count();
+                    if (!$st->contains(0)) $halfAbsentNoPunch += $halfAbsent;
+                }
                 $weekendDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [17, 20])->count() ?? 0; 
                 $holidayDays = $user->hasOfficialInformation->attendanceLogs?->whereIn('attendance_status', [9])->count() ?? 0; 
                 // Special Leave (24) is paid like leave; it is kept in summary type '8', never as type '24' (that is payable days)
@@ -229,6 +241,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                                 // late is NOT cut from payable days; it is deducted once, as the late head (15) below
                                 // absent days are not in present days, so they are simply not paid -- no subtraction
                                 - ($halfDayAbsentDays * 0.5)
+                                + ($halfLeaveNoPunch * 0.5)
                                 + $weekendDays
                                 + $holidayDays
                                 + $paidLeaveDays
@@ -236,7 +249,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 // payable days can never exceed the days in the month
                 $payable_days = min($payable_days, (int) date('t', strtotime($payload['salary_calculate_month_year'])));
 
-                $absentDays = $absentDays + ($halfDayAbsentDays * 0.5);
+                $absentDays = $absentDays + (($halfDayAbsentDays + $halfAbsentNoPunch) * 0.5);
                 $attendance_summary_value_list = [
                     ['type'=>'0', 'value'=>$absentDays.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
                     ['type'=>'1', 'value'=>$total_present_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
@@ -439,7 +452,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 // a saved unpaid_leave row wins; otherwise unpaid leave days x one day's gross, whole taka like PF
                 $unpaidLeaveAmount = $existedUnPaidDeductionRows->count() > 0
                     ? round((float) $existedUnPaidDeductionRows->first()->amount)
-                    : round($user->hasOfficialInformation->hasUnpaidLeave->count() * $gross_salary_of_1_day); // $basic_salary_of_1_day
+                    : round($unpaidLeaveDeduction * $gross_salary_of_1_day); // $basic_salary_of_1_day
                 if ($unpaidLeaveAmount > 0) {
                     $total_deductable += $unpaidLeaveAmount;
 
