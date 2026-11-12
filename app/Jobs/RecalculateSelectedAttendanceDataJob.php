@@ -90,7 +90,12 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                     date('Y-m-01', strtotime($startBoundary)),
                     date('Y-m-t',  strtotime($endBoundary)),
                 ])
-                ->where('attendance_status', 2)
+                ->where('attendance_status', 2),
+            // approved only, same as ProcessManualDataJob (lazy-loading would include pending/rejected)
+            'hasEarlyOutRequests' => fn($q) => $q
+                ->whereNull('deleted_at')
+                ->whereBetween('out_date', [$startBoundary, $endBoundary])
+                ->where('approval_status', 1),
         ])
         ->when(
                 !empty($this->employeeUserIds), 

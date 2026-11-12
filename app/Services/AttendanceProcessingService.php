@@ -252,7 +252,8 @@ class AttendanceProcessingService
         );
 
         $this->applySecondHalfDayStatus(
-            $date, $shift, $first, $last, $leaveApplicationDetails, $has_halfday_leave, $statusesForLog
+            $date, $shift, $first, $last, $leaveApplicationDetails, $has_halfday_leave, $statusesForLog,
+            $row->hasEarlyOutRequests ?? null
         );
 
         // ── Attendance statuses ───
@@ -952,7 +953,8 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
 
     private function applySecondHalfDayStatus(
         string $date, ?object $shift, ?object $first, ?object $last,
-        ?Collection $leaveApplicationDetails, bool $has_halfday_leave, array &$statusesForLog
+        ?Collection $leaveApplicationDetails, bool $has_halfday_leave, array &$statusesForLog,
+        ?Collection $earlyOutRequests = null
     ): void {
         //Log::info('Before Debug SecondHalfDayStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'has_halfday_leave'=>$has_halfday_leave, 'leaveApplicationDetails'=>$leaveApplicationDetails]);
         if (
@@ -964,6 +966,19 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             return;
         }
         //Log::info('After Debug SecondHalfDayStatus:', ['date'=>$date, 'shift'=>$shift, 'first'=>$first, 'last'=>$last, 'has_halfday_leave'=>$has_halfday_leave, 'leaveApplicationDetails'=>$leaveApplicationDetails]);
+
+
+        //consider as early out if there is approved earlyout application for (clock_out_start_time - 1 hour)
+        // (requests are eager-loaded approved-only: approval_status = 1, not deleted)
+        $specialEarlyOutFrom = strtotime($date . ' ' . $shift->clock_out_start_time . ' -1 hour');
+        if (
+            strtotime($last->punch_datetime) >= $specialEarlyOutFrom &&
+            $earlyOutRequests?->where('out_date', $date)->first()
+        ) {
+            $statusesForLog[] = 7;  // Early Out
+            $statusesForLog[] = 23; // Early Out Authorized
+            return; // not a 2nd-half absent
+        }
 
         if ($leaveApplicationDetails && $leaveApplicationDetails->where('first_second_half', 6)->contains('leave_date', $date)) {
             $this->leave_application_id = $leaveApplicationDetails->where('first_second_half', 6)->where('leave_date', $date)->first()->leave_application_id;
