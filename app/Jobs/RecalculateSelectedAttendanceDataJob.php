@@ -73,12 +73,17 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
 
         $startBoundary = $this->dates[0];
         $endBoundary   = $this->dates[count($this->dates) - 1];
+        $nextDayBoundary = date('Y-m-d', strtotime($endBoundary . ' +1 day'));
 
 
         // ── Pre-load shared look-up data (same pattern as ProcessTempDataJob) ─
         $officialInfos = EmployeeOfficialInformation::with([
             'employeeAttendanceTemps' => fn($q) => $q
                 ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $endBoundary])
+                ->orderBy('punch_datetime'),
+            // +1 day: the next morning holds a night shift's checkout (post-pass at the end)
+            'employeeAttendancePunchHistories' => fn($q) => $q
+                ->whereRaw('DATE(punch_datetime) BETWEEN ? AND ?', [$startBoundary, $nextDayBoundary])
                 ->orderBy('punch_datetime'),
             'employeeOtPolicy'       => fn($q) => $q
                 ->where('effective_date', '<=', $startBoundary)->where('status', 1),
@@ -91,6 +96,10 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                     date('Y-m-t',  strtotime($endBoundary)),
                 ])
                 ->where('attendance_status', 2),
+            // roster shift per date, same as ProcessTempDataJob (one day earlier for the pre-pass's previous day)
+            'hasRosterAssignment' => fn($q) => $q
+                ->whereBetween('from_date', [date('Y-m-d', strtotime($startBoundary . ' -1 day')), $nextDayBoundary])
+                ->whereHas('roster', fn($q) => $q->whereNull('deleted_at')->whereNull('deleted_by')),
             // approved only, same as ProcessManualDataJob (lazy-loading would include pending/rejected)
             'hasEarlyOutRequests' => fn($q) => $q
                 ->whereNull('deleted_at')
@@ -102,13 +111,18 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                 fn($q) => $q->whereIn('employee_user_id', $this->employeeUserIds)
             )
         ->get();
-        $shifts = Shift::where('effective_date', '<=', $startBoundary)
-            ->orderBy('effective_date', 'desc')
+        // all live shifts, same as ProcessTempDataJob / ProcessManualDataJob. Filtering on
+        // effective_date <= start dropped a shift created later (E, from 2026-11-01): its employees'
+        // earlier days were deleted above and never rebuilt (process() skips a day without a shift).
+        $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
             ->get()
             ->keyBy('id');
 
+        // approved, not deleted only — same as ProcessTempDataJob / ProcessManualDataJob
         $leaveApplicationDetails = LeaveApplicationDetail::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereBetween('leave_date', [$startBoundary, $endBoundary])
+            ->whereNull('deleted_at')
+            ->whereHas('leaveApplication', fn ($q) => $q->where('approval_status', 1)->whereNull('deleted_at'))
             ->get()
             ->groupBy('employee_user_id');
 
@@ -188,9 +202,12 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
         // Runs before AttendanceProcessingService (centralised overnight / night-shift
         // cross-day checkout handling). Returns skip keys for dates consumed as the
         // previous day's night checkout.
+        // roster-assigned shift for the date wins over the employee's default shift (as in the cron);
+        // without it a rostered day shift is recalculated as the night shift and punches land on the wrong day
         $shiftResolver = function ($row, $date) use ($shifts) {
-            $shiftId = $row->shift_id ?? 1;
-            return $shifts->get($shiftId);
+            $rosterShiftId = $row->hasRosterAssignment?->where('from_date', $date)->first()?->shift_id;
+            // no roster → actual_shift_id, as ProcessTempDataJob / ProcessManualDataJob do
+            return $shifts->get($rosterShiftId ?: ($row->actual_shift_id ?: ($row->shift_id ?? 1)));
         };
         $prevDaySkipKeys = app(\App\Services\PreviousDayOutPunchUpdateService::class)
             ->process($officialInfos, $this->dates, $shiftResolver);
@@ -198,6 +215,20 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             'skip_key_count' => count($prevDaySkipKeys),
             'skip_keys' => array_keys($prevDaySkipKeys),
         ]);
+
+        // employee_attendance_temp only holds today's device punches; every raw punch is also kept in
+        // employee_attendance_punch_histories. Merge them, or recalculating a past biometric day
+        // (e.g. after a leave / early-out approval) wipes its punches. Duplicates are dropped by
+        // unique('punch_datetime') in the punch resolvers.
+        // Merged AFTER the pre-pass: that pass can only close days that still exist, and the submitted
+        // days were deleted above — their night checkouts are back-filled by the post-pass at the end.
+        foreach ($officialInfos as $info) {
+            $info->setRelation('employeeAttendanceTemps', $info->employeeAttendanceTemps
+                ->concat($info->employeeAttendancePunchHistories)
+                ->sortBy('punch_datetime')
+                ->values());
+            $info->unsetRelation('employeeAttendancePunchHistories');
+        }
 
         // ── Process every submitted employee × date ───────────────────────────
         $prepared            = [];
@@ -217,8 +248,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             $empDates = $this->dates;
 
             foreach ($empDates as $date) {
-                $shiftId       = $row->shift_id ?? Shift::find(1)->id;
-                $shift         = $shifts->get($shiftId);
+                $shift         = $shiftResolver($row, $date);
                 $publicHoliday = optional($publicHolidaysByEmp->get($row->employee_user_id))->get($date);
                 $empHoliday    = optional($employeeHolidaysByEmp->get($row->employee_user_id))->get($date);
                 
@@ -366,5 +396,15 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
                 EmployeeLeaveAchieveLog::insert($chunk);
             }
         }
+
+        // ── Post-pass: night checkouts of the recalculated days ───────────────
+        // A night shift's checkout is the next morning's punch; the cron back-fills it while
+        // processing the next day. Do the same for every submitted date + 1, now that the
+        // recalculated rows exist (the pre-pass above ran while they were deleted).
+        $nextDates = array_values(array_unique(array_map(
+            fn ($d) => date('Y-m-d', strtotime($d . ' +1 day')), $this->dates
+        )));
+        app(\App\Services\PreviousDayOutPunchUpdateService::class)
+            ->process($officialInfos, $nextDates, $shiftResolver);
     }
 }
