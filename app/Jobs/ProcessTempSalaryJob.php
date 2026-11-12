@@ -178,7 +178,10 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             ->where('is_draft', 0)
             ->whereNull('deleted_by')
             ->whereNull('deleted_at')
-            ->whereHas('hasOfficialInformation');
+            // joined after this salary month = not on this month's sheet (no proration/attendance applies to them)
+            ->whereHas('hasOfficialInformation', fn ($q) => $q->where(fn ($q) => $q
+                ->whereNull('joining_date')
+                ->orWhere('joining_date', '<=', date('Y-m-t', strtotime($payload['salary_calculate_month_year'])))));
         if (isset($payload['employeeIds']) && count($payload['employeeIds']) > 0) {
             $userQuery->whereIn('id', $payload['employeeIds']);
         }
