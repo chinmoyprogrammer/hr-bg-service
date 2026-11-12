@@ -609,21 +609,31 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $head_amounts = $user->hasOfficialInformation->hasSalaryStructure?->where('is_earning', 1);
                 //Log::info('head_amounts', ['head_amounts' => $head_amounts]);
 
+                // new joiner: earn only the calendar days from joining_date to month end
+                // (no shift/weekend/holiday setup exists before joining, so those days are not absent)
+                $monthStart = date('Y-m-01', strtotime($payload['salary_calculate_month_year']));
+                $daysInMonth = (int) date('t', strtotime($monthStart));
+                $joiningTs = strtotime((string) $user->hasOfficialInformation->joining_date);
+                $earnFactor = ($joiningTs && date('Y-m', $joiningTs) === date('Y-m', strtotime($monthStart)))
+                    ? ($daysInMonth - (int) date('j', $joiningTs) + 1) / $daysInMonth
+                    : 1;
+
                 // loop through each head
                 //.... insert salary to TempSalary
                 foreach ($head_amounts as $head) {
                     if ($head->amount > 0) {
+                        $headValue = round($head->amount * $earnFactor, 2);
                         $PayrollSalarySheetHeadsTemp[] = [
                             'salary_sheet_temp_id' => null,
                             'employee_id_for_mapping' => $user->id,
                             'employee_user_id' => $user->id,
                             'head_id' => $head->salary_head_id,
-                            'value' => $head->amount,
+                            'value' => $headValue,
                             'is_earning' => $head->is_earning,
                             'created_user_id' => getUserId(), // todo:: need a system user id
                             'created_at' => date('Y-m-d H:i:s'),
                         ];
-                        $total_earning += $head->amount;
+                        $total_earning += $headValue;
                     }
                 }
 
@@ -890,18 +900,26 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
     // get cash , bank , mfs amount
     private function getCashBankMfsAmount($data, $salaryPayable)
     {
-        $cashLimit = max(0, (float) ($data->cash_pay_amount ?? 0));
         $bankLimit = max(0, (float) ($data->bank_pay_amount ?? 0));
         $remaining = max(0, round((float) $salaryPayable, 2));
+        $cash = $bank = $mfs = 0;
 
-        // first pay cash , if some amount rest after cash pay max of bank, after bank fills rest will go to mfs
-        $cash = min($cashLimit, $remaining);
-        $remaining = round($remaining - $cash, 2);
-
-        $bank = min($bankLimit, $remaining);
-        $remaining = round($remaining - $bank, 2);
-
-        $mfs = $remaining;
+        // payment_modes: 1 Cash, 2 Bank, 3 Mobile Payment, 4 Bank + Cash
+        switch ((int) ($data->salary_payment_mode ?? 1)) {
+            case 2:
+                $bank = $remaining;
+                break;
+            case 3:
+                $mfs = $remaining;
+                break;
+            case 4:
+                // deductions come off cash first, then bank: bank keeps its set amount while net covers it
+                $bank = min($bankLimit, $remaining);
+                $cash = round($remaining - $bank, 2);
+                break;
+            default:
+                $cash = $remaining;
+        }
 
         return [
             'cash' => round($cash, 2),
