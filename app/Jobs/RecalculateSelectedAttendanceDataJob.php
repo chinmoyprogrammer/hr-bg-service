@@ -149,7 +149,8 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
             ->where('holiday_duty_requisitions.status', 'Approved')
             ->whereNotNull('holiday_duty_requisitions.approved_at')
-            ->whereNull('deleted_at')
+            ->whereNull('holiday_duty_requisitions.deleted_at')
+            ->whereNull('holiday_duty_requisition_details.deleted_at')
             ->get();
 
 
@@ -199,8 +200,8 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
 
             foreach ($totalLeaveAchieved as $item) {
                 EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
-                    ->decrement('current_balance', $item->leave_count)
-                    ->whereNull('deleted_at');
+                    ->whereNull('deleted_at')
+                    ->decrement('current_balance', $item->leave_count);
             }
 
             EmployeeAttendanceStatusLog::whereIn('employee_attendance_id', $attRecordIds)->delete();
