@@ -114,7 +114,8 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
         // all live shifts, same as ProcessTempDataJob / ProcessManualDataJob. Filtering on
         // effective_date <= start dropped a shift created later (E, from 2026-11-01): its employees'
         // earlier days were deleted above and never rebuilt (process() skips a day without a shift).
-        $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
+        $shifts = Shift::whereNull('deleted_at')
+            ->whereNull('deleted_by')
             ->get()
             ->keyBy('id');
 
@@ -123,6 +124,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             ->whereBetween('leave_date', [$startBoundary, $endBoundary])
             ->whereNull('deleted_at')
             ->whereHas('leaveApplication', fn ($q) => $q->where('approval_status', 1)->whereNull('deleted_at'))
+            ->whereNull('deleted_at')
             ->get()
             ->groupBy('employee_user_id');
 
@@ -130,6 +132,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
         $publicHolidaysByEmp = Holiday::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereBetween('date', [$startBoundary, $endBoundary])
             ->where('holiday_type_id', '<>', 8)
+            ->whereNull('deleted_at')
             ->get()
             ->groupBy('employee_user_id')
             ->map(fn($c) => $c->keyBy('date'));
@@ -137,6 +140,7 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
         $employeeHolidaysByEmp = Holiday::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereBetween('date', [$startBoundary, $endBoundary])
             ->where('holiday_type_id', 8)
+            ->whereNull('deleted_at')
             ->get()
             ->groupBy('employee_user_id')
             ->map(fn($c) => $c->keyBy('date'));
@@ -145,18 +149,24 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
             ->where('holiday_duty_requisitions.status', 'Approved')
             ->whereNotNull('holiday_duty_requisitions.approved_at')
+            ->whereNull('holiday_duty_requisitions.deleted_at')
+            ->whereNull('holiday_duty_requisition_details.deleted_at')
             ->get();
+
+
 
         $otRequisitions = EmployeeOtRequisition::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$startBoundary])
             ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$endBoundary])
             ->whereNotNull('approval_date')
+            ->whereNull('deleted_at')
             ->get()
             ->keyBy('employee_user_id');
 
         // ── Delete existing attendance records for the submitted emp × date pairs
         $existingRows = EmployeeAttendance::whereIn('employee_user_id', $this->employeeUserIds)
             ->whereIn('date', $this->dates)
+            ->whereNull('deleted_at')
             ->get(['id', 'employee_user_id', 'date', 'in_time', 'out_date', 'out_time', 'source', 'is_manual', 'is_corrected', 'remarks']);
         $attRecordIds = $existingRows->pluck('id');
 
@@ -185,10 +195,12 @@ class RecalculateSelectedAttendanceDataJob extends Job implements ShouldQueue
             $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
                 ->selectRaw('SUM(leave_count) as leave_count, employee_leave_balance_id')
                 ->groupBy('employee_leave_balance_id')
+                ->whereNull('deleted_at')
                 ->get();
 
             foreach ($totalLeaveAchieved as $item) {
                 EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
+                    ->whereNull('deleted_at')
                     ->decrement('current_balance', $item->leave_count);
             }
 

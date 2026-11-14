@@ -323,7 +323,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
                 ->where('holiday_duty_requisitions.status', 'Approved')
                 ->whereNotNull('holiday_duty_requisitions.approved_at')
-                ->whereNull('deleted_at')
+                ->whereNull('holiday_duty_requisitions.deleted_at')
+                ->whereNull('holiday_duty_requisition_details.deleted_at')
                 ->get();
             /* if($holidayDutyRequisitions->isNotEmpty()){
                 Log::warning('holiday Requisition:', ['holiday Requisition:' => $holidayDutyRequisitions]);
