@@ -259,6 +259,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                     }),
                 'hasNonWeekendHolidays' => fn($q) => $q
                     ->whereBetween('date', [$startBoundary, $endBoundary])
+                    ->whereNull('deleted_at')
                     ->where('holiday_type_id', '<>', 8)
             ])
             ->where(function ($q) use ($endDate) {
@@ -283,7 +284,8 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             
             //208, 395, ->where('employee_user_id','=', 208)
 
-            $shifts = Shift::whereNull('deleted_at')->whereNull('deleted_by')
+            $shifts = Shift::whereNull('deleted_at')
+                ->whereNull('deleted_by')
                 ->orderBy('effective_date', 'desc')
                 ->get()
                 ->keyBy('id');
@@ -292,6 +294,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->whereHas('leaveApplication', function($q) {
                     $q->where('approval_status', 1);
                 })
+                ->whereNull('deleted_at')
                 ->get()
                 ->groupBy('employee_user_id');
 
@@ -306,6 +309,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $employeeHolidaysByEmp = Holiday::whereBetween('date', [$startDate, $endDate])
                 ->whereNotNull('employee_user_id')
                 ->where('holiday_type_id', 8)
+                ->whereNull('deleted_at')
                 ->get()
                 ->groupBy('employee_user_id')
                 ->map(fn($c) => $c->keyBy('date'));
@@ -319,6 +323,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 ->join('holiday_duty_requisition_details', 'holiday_duty_requisitions.id', '=', 'holiday_duty_requisition_details.holiday_duty_requisition_id')
                 ->where('holiday_duty_requisitions.status', 'Approved')
                 ->whereNotNull('holiday_duty_requisitions.approved_at')
+                ->whereNull('deleted_at')
                 ->get();
             /* if($holidayDutyRequisitions->isNotEmpty()){
                 Log::warning('holiday Requisition:', ['holiday Requisition:' => $holidayDutyRequisitions]);
@@ -328,6 +333,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
             $otRequisitions = EmployeeOtRequisition::whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$startDate])
                 ->whereRaw('? BETWEEN ot_date_from AND ot_date_to', [$endDate])
                 ->whereNotNull('approval_date')
+                ->whereNull('deleted_at')
                 ->get()
                 ->keyBy('employee_user_id');
             /* if($otRequisitions->isNotEmpty()){
@@ -342,6 +348,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
                     ->selectRaw('SUM(leave_count) as leave_count, employee_leave_balance_id')
                     ->groupBy('employee_leave_balance_id')
+                    ->whereNull('deleted_at')
                     ->get();
                 /* if($totalLeaveAchieved->isNotEmpty()){
                     Log::warning('totalLeaveAchieved:', ['totalLeaveAchieved:' => $totalLeaveAchieved]);
@@ -349,6 +356,7 @@ class ProcessTempDataJob extends Job implements ShouldQueue
                 } */
                 foreach ($totalLeaveAchieved as $item) {
                     EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
+                        ->whereNull('deleted_at')
                         ->decrement('current_balance', $item->leave_count);
                 }
 
