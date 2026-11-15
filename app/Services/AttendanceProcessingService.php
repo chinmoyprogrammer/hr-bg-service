@@ -26,6 +26,7 @@ class AttendanceProcessingService
     private string $source;
     private ?string $remarks;
     private bool $isAbsentInFirstHalf;
+    private bool $manualOutOnly = false; // manual entry with only out_time → always Incomplete In (10)
     private ?int $leave_application_id;
 
     public function __construct()
@@ -65,6 +66,7 @@ class AttendanceProcessingService
 
         Log::info('Attendance processing started for employee:', ['employee_user_id' => $row->employee_user_id, 'date' => $date]);
         $this->isAbsentInFirstHalf = false;
+        $this->manualOutOnly = false;
         $this->leave_application_id = null;
 
         // ── Reset per-call state ────────────────────────────────────────────────
@@ -245,25 +247,33 @@ class AttendanceProcessingService
         );
 
         $this->applyIncompleteInOutStatus($date, $shift, $first, $last, $statusesForLog);
-        $this->applyEarlyOutStatus($row, $date, $shift, $last, $shiftEnd, $statusesForLog);
 
-        $has_halfday_leave = $this->applyFirstHalfDayStatus(
-            $date, $shift, $first, $last, $leaveApplicationDetails, $statusesForLog
+        // Half-day leave day: the leave covers one half, only the other half is judged (never 0/15)
+        $halfDayLeaveDone = $this->applyHalfDayLeaveStatus(
+            $row, $date, $shift, $first, $last, $shiftStart, $shiftEnd, $grace, $now, $leaveApplicationDetails, $statusesForLog
         );
 
-        $this->applySecondHalfDayStatus(
-            $date, $shift, $first, $last, $leaveApplicationDetails, $has_halfday_leave, $statusesForLog,
-            $row->hasEarlyOutRequests ?? null
-        );
+        if (!$halfDayLeaveDone) {
+            $this->applyEarlyOutStatus($row, $date, $shift, $last, $shiftEnd, $statusesForLog);
 
-        // ── Attendance statuses ───
-        $this->applyPresentOrLateStatus(
-            $row, $date, $shift, $first, $last, $shiftStart, $grace, $now, $statusesForLog
-        );
+            $has_halfday_leave = $this->applyFirstHalfDayStatus(
+                $date, $shift, $first, $last, $leaveApplicationDetails, $statusesForLog
+            );
 
-        $this->applyBothHalfDayAbsentStatus(
-            $date, $shift, $first, $last, $statusesForLog
-        );
+            $this->applySecondHalfDayStatus(
+                $date, $shift, $first, $last, $leaveApplicationDetails, $has_halfday_leave, $statusesForLog,
+                $row->hasEarlyOutRequests ?? null
+            );
+
+            // ── Attendance statuses ───
+            $this->applyPresentOrLateStatus(
+                $row, $date, $shift, $first, $last, $shiftStart, $grace, $now, $statusesForLog
+            );
+
+            $this->applyBothHalfDayAbsentStatus(
+                $date, $shift, $first, $last, $statusesForLog
+            );
+        }
 
         // ── OT calculation ────
         $transferedToOTStatus = false;
@@ -452,6 +462,13 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         $last = !empty($manualPunch['out_time'])
             ? (object) ['punch_datetime' => date('Y-m-d',strtotime($outDate)) . ' ' . $manualPunch['out_time']]
             : null;
+
+        // out-only manual entry (Incomplete In) = a single punch, same as a lone biometric punch;
+        // otherwise $first is null and the day is wrongly rebuilt as a no-punch (absent) day
+        if (!$first && $last) {
+            [$first, $last] = [$last, null];
+            $this->manualOutOnly = true; // keep it an out punch even when its time is in the morning
+        }
 
         return [$first, $last, null];
     }
@@ -882,6 +899,7 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         }
 
         if (
+            !$this->manualOutOnly &&
             strtotime($first->punch_datetime) >= strtotime($date . ' ' . $shift->start_check_in_time) &&
             strtotime($first->punch_datetime) <= strtotime($date . ' ' . $shift->first_half_day)
         ) {
@@ -917,6 +935,83 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
                 $statusesForLog[] = 23; // Early Out Authorized
             }
         }
+    }
+
+    /**
+     * Approved half-day leave on a day with punches. The leave covers one half; only the other
+     * half is judged, and the day is never turned into full absent (0/15).
+     *  - 2nd-half leave (6): 1st half worked = in by end_check_in_time and out at/after first_half_day
+     *    → Present (+Late); otherwise 1st half absent (3). No early out on this day.
+     *  - 1st-half leave (4): 2nd half worked = in before clock_out_start_time and out at/after it
+     *    (or an approved early out from clock_out_start_time − 1 hour) → Present (+Late from second_half_day),
+     *    early out as usual; otherwise 2nd half absent (5).
+     * A single punch (10/11, already logged) keeps the worked half as Present.
+     * Returns false when there is no half-day leave on the date (normal rules apply).
+     */
+    private function applyHalfDayLeaveStatus(
+        object $row, string $date, object $shift, object $first, ?object $last,
+        string $shiftStart, string $shiftEnd, int $grace, string $now,
+        ?Collection $leaveApplicationDetails, array &$statusesForLog
+    ): bool {
+        // ponytail: day-shift times only (all compared on $date); night shifts keep the old rules
+        // until half-day boundaries that cross midnight are needed
+        if ((int) ($shift->is_overnight ?? 0) === 1) {
+            return false;
+        }
+
+        $onDate          = $leaveApplicationDetails?->where('leave_date', $date);
+        $firstHalfLeave  = $onDate?->firstWhere('first_second_half', 4);
+        $secondHalfLeave = $onDate?->firstWhere('first_second_half', 6);
+        if (!$firstHalfLeave && !$secondHalfLeave) {
+            return false;
+        }
+
+        $this->leave_application_id = ($firstHalfLeave ?? $secondHalfLeave)->leave_application_id;
+        $at  = fn (string $time) => strtotime($date . ' ' . $time);
+        $in  = strtotime($first->punch_datetime);
+        $out = $last ? strtotime($last->punch_datetime) : null; // null = single punch
+        $incompleteIn = in_array(10, $statusesForLog, true);
+
+        if ($firstHalfLeave && $secondHalfLeave) {
+            array_push($statusesForLog, 4, 6);
+            return true;
+        }
+
+        if ($secondHalfLeave) {
+            $firstHalfWorked = !$incompleteIn
+                && $in <= $at($shift->end_check_in_time)
+                && ($out === null || $out >= $at($shift->first_half_day));
+
+            if ($firstHalfWorked) {
+                $this->applyPresentOrLateStatus($row, $date, $shift, $first, $last, $shiftStart, $grace, $now, $statusesForLog);
+            } else {
+                $statusesForLog[] = 3; // Half-day 1st (Unapproved) — left before first_half_day / came after check-in window
+            }
+            $statusesForLog[] = 6; // Half-day 2nd (Approved)
+            return true;
+        }
+
+        $statusesForLog[] = 4; // Half-day 1st (Approved)
+        $outFrom = $at($shift->clock_out_start_time);
+        $authorizedEarlyOut = $out !== null && $out < $outFrom
+            && $out >= strtotime($date . ' ' . $shift->clock_out_start_time . ' -1 hour')
+            && $row->hasEarlyOutRequests?->where('out_date', $date)->first();
+        $secondHalfWorked = $incompleteIn
+            || ($in < $outFrom && ($out === null || $out >= $outFrom || $authorizedEarlyOut));
+
+        if (!$secondHalfWorked) {
+            $statusesForLog[] = 5; // Half-day 2nd (Unapproved)
+            return true;
+        }
+
+        $this->isAbsentInFirstHalf = true; // late is judged from second_half_day
+        $this->applyPresentOrLateStatus($row, $date, $shift, $first, $last, $shiftStart, $grace, $now, $statusesForLog);
+        if ($authorizedEarlyOut) {
+            array_push($statusesForLog, 7, 23); // Early Out + Early Out Authorized
+        } else {
+            $this->applyEarlyOutStatus($row, $date, $shift, $last, $shiftEnd, $statusesForLog);
+        }
+        return true;
     }
 
     /** Returns true if a first-half-day flag was set. */

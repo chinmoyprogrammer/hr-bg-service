@@ -68,6 +68,11 @@ class EmployeeOfficialInformation extends Model
         return $this->hasMany(EmployeeAttendanceTemp::class,'emp_code','emp_code_old');
     }
 
+    public function employeeAttendancePunchHistories()
+    {
+        return $this->hasMany(EmployeeAttendancePunchHistory::class, 'emp_code', 'emp_code_old');
+    }
+
     public function employeeOtPolicy()
     {
         return $this->hasOne(EmployeeOtPolicy::class, 'id', 'employee_ot_policy_id');

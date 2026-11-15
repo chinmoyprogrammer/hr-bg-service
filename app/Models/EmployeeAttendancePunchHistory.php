@@ -9,5 +9,9 @@ class EmployeeAttendancePunchHistory extends Model
     protected $table = 'employee_attendance_punch_histories';
     protected $primaryKey = 'id';
     public $timestamps = false;
-    //
+
+    // same as EmployeeAttendanceTemp, so both can be mixed in one punch collection
+    protected $casts = [
+        'punch_datetime' => 'datetime',
+    ];
 }
