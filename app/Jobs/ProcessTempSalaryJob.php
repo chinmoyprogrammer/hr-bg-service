@@ -70,6 +70,14 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
         $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
         $meal_rate = BusinessSetting::where('settings_key', 'PER_MEAL_COST')->first()->value;
 
+        // attendance summary of this month: [employee_user_id => [type => value]]
+        $summaryByUser = DB::table('payroll_attendance_summary_values')
+            ->where('year', (int) $generateYear)
+            ->where('month', (int) $generateMonth)
+            ->get(['employee_user_id', 'type', 'value'])
+            ->groupBy('employee_user_id')
+            ->map(fn ($rows) => $rows->pluck('value', 'type'));
+
         // loan / pf_loan / advance installments due this month, grouped by employee.
         // Read from the repayment schedule (hr-admin LoanService owns it), so carried
         // amounts, reschedules, waivers and a smaller last installment are honoured.
@@ -186,7 +194,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
             $userQuery->whereIn('id', $payload['employeeIds']);
         }
         $userQuery->lazy()
-            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate, $dueLoanRowsByUser, $pausedPrKeys, $othersDeductionsByUser) {
+            ->each(function ($user) use (&$PayrollPreSalarySheetDeduction, &$PayrollSalaryAdvanceLoanNOtherInstallment, &$PayrollSalarySheetHeadsTemp, $payload, &$EmployeePfContribution, &$PayrollSalarySheetTemp, &$PayrollAttendanceSummaryValues,$meal_rate, $summaryByUser, $dueLoanRowsByUser, $pausedPrKeys, $othersDeductionsByUser) {
                 $total_earning = $total_deductable = $net_salary_payable = 0;
                 $generateMonth = date('n', strtotime($payload['salary_calculate_month_year']));
                 $generateYear  = date('Y', strtotime($payload['salary_calculate_month_year']));
@@ -250,32 +258,46 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $payable_days = min($payable_days, (int) date('t', strtotime($payload['salary_calculate_month_year'])));
 
                 $absentDays = $absentDays + (($halfDayAbsentDays + $halfAbsentNoPunch) * 0.5);
-                $attendance_summary_value_list = [
-                    ['type'=>'0', 'value'=>$absentDays.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'1', 'value'=>$total_present_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'2', 'value'=>$deductable_late_days.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'8', 'value'=>$paidLeaveDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'9', 'value'=>$holidayDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'17', 'value'=>$weekendDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'24', 'value'=>$payable_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'25', 'value'=>$unpaidLeaveDeduction.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                    ['type'=>'26', 'value'=>$late_attendance_consideration_requests, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
-                ];
 
+                // the saved attendance summary (hr-admin Payroll > Attendance Summary, incl. 'manual' rows)
+                // overrides the log-based values above; summary values 0/2/26 are stored negative
+                $summary = $summaryByUser->get($user->id, collect());
+                $total_present_days = (float) ($summary['1'] ?? 0);
+                $absentDays = abs((float) ($summary['0'] ?? 0));
+                $deductable_late_days = (int) abs((float) ($summary['2'] ?? 0));
+                $late_attendance_consideration_requests = (float) ($summary['27'] ?? 0);
+                $net_deductable_late_days = max($deductable_late_days - $late_attendance_consideration_requests, 0);
+                $unpaidLeaveDeduction = abs((float) ($summary['26'] ?? 0));
+                $payable_days = (float) ($summary['25'] ?? 0);
+                $mealCount = (int) ($summary['28'] ?? 0);
 
-                //... insert data to PayrollAttendanceSummaryValues
-                foreach($attendance_summary_value_list as $item)
-                {
-                    $PayrollAttendanceSummaryValues[] = [
-                        'type'=>$item['type'],
-                        'value'=>$item['value'],
-                        'year'=>$item['year'],
-                        'month'=>$item['month'],
-                        'employee_user_id'=>$item['employee_user_id'],
-                        'created_at'=>$item['created_at'],
-                        'created_by'=>$item['created_by'],
-                    ];
-                }
+                // summary rows are now written by hr-admin PayrollAttendanceSummaryController, not here
+                // $attendance_summary_value_list = [
+                    // ['type'=>'0', 'value'=>$absentDays.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'1', 'value'=>$total_present_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'2', 'value'=>$deductable_late_days.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'8', 'value'=>$paidLeaveDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'9', 'value'=>$holidayDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'17', 'value'=>$weekendDays, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'25', 'value'=>$payable_days, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'26', 'value'=>$unpaidLeaveDeduction.(-1), 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                    // ['type'=>'27', 'value'=>$late_attendance_consideration_requests, 'year'=>$generateYear, 'month'=>$generateMonth, 'employee_user_id'=>$user->id, 'created_at'=>date('Y-m-d H:i:s'), 'created_by'=>getUserId()],
+                // ];
+// 
+// 
+                // //... insert data to PayrollAttendanceSummaryValues
+                // foreach($attendance_summary_value_list as $item)
+                // {
+                    // $PayrollAttendanceSummaryValues[] = [
+                        // 'type'=>$item['type'],
+                        // 'value'=>$item['value'],
+                        // 'year'=>$item['year'],
+                        // 'month'=>$item['month'],
+                        // 'employee_user_id'=>$item['employee_user_id'],
+                        // 'created_at'=>$item['created_at'],
+                        // 'created_by'=>$item['created_by'],
+                    // ];
+                // }
 
                 
                 $gross_payable = $gross_salary_of_1_day * $payable_days;
@@ -361,22 +383,12 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                 //... calculate meal deductions
                 $total_meal_cost_this_month = 0;
-                if ($total_present_days > 0 && $user->hasOfficialInformation->is_mealable == 1 && $user->hasOfficialInformation->is_free_meal == 0) {
-                    $mealPauseCount = $user->hasOfficialInformation->hasMealLoanAitPfEtcPauses()
-                        ?->select('pause_date')->distinct()
-                        ->whereMonth('pause_date', $generateMonth)
-                        ->whereYear('pause_date', $generateYear)
-                        ->where('pause_type', 1)       // 1 = meal deduction pause
-                        ->where('approval_status', 1)  // 1 = approved
-                        ->count() ?? 0;
-
+                // meal count (summary type 28) already nets meal pauses + weekend duty
+                if ($mealCount > 0 && $user->hasOfficialInformation->is_mealable == 1 && $user->hasOfficialInformation->is_free_meal == 0) {
                     $meal_rate = $user->hasOfficialInformation->per_meal_cost == 0 || $user->hasOfficialInformation->per_meal_cost == null ? $meal_rate : $user->hasOfficialInformation->per_meal_cost;
 
-                    $total_meal_cost_this_month = ($total_present_days - $mealPauseCount+$weekendDutyDays) * $meal_rate;
-                    Log::info('total_meal_cost_this_month', ['present_days'=>$total_present_days,
-                            'meal_cost'=>$total_meal_cost_this_month,
-                            'mealPauseCount'=>$mealPauseCount,
-                            'weekendDutyDays'=>$weekendDutyDays  ]);
+                    $total_meal_cost_this_month = $mealCount * $meal_rate;
+                    Log::info('total_meal_cost_this_month', ['meal_count'=>$mealCount, 'meal_cost'=>$total_meal_cost_this_month]);
 
                     if ($total_meal_cost_this_month > 0) {
                         $total_deductable += $total_meal_cost_this_month;
@@ -803,12 +815,12 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
                         ->pluck('id');
 
-                    // scope এর মধ্যে থাকা আগের এই মাস-বছরের attendance summary values মুছে ফেলো
-                    DB::table('payroll_attendance_summary_values')
-                        ->where('month', $month)
-                        ->where('year', $year)
-                        ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
-                        ->delete();
+                    // attendance summary values are owned by hr-admin Attendance Summary page now -- never delete here
+                    // DB::table('payroll_attendance_summary_values')
+                    //     ->where('month', $month)
+                    //     ->where('year', $year)
+                    //     ->when($scopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_user_id', $scopeEmployeeIds))
+                    //     ->delete();
                         
 
                     if ($oldIds->isNotEmpty()) {
@@ -897,12 +909,13 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                     // }
 
                     // ধাপ 7: attendance summary values batch insert (chunk করে) — পুরনো data ধাপ ০ তে মুছে ফেলা হয়েছে
-                    Log::info("Attendance summary values: ".json_encode($PayrollAttendanceSummaryValues));
-                    if (count($PayrollAttendanceSummaryValues) > 0) {
-                        foreach (array_chunk($PayrollAttendanceSummaryValues, 500) as $chunk) {
-                            DB::table('payroll_attendance_summary_values')->insert($chunk);
-                        }
-                    }
+                    // written by hr-admin Attendance Summary page now
+                    // Log::info("Attendance summary values: ".json_encode($PayrollAttendanceSummaryValues));
+                    // if (count($PayrollAttendanceSummaryValues) > 0) {
+                    //     foreach (array_chunk($PayrollAttendanceSummaryValues, 500) as $chunk) {
+                    //         DB::table('payroll_attendance_summary_values')->insert($chunk);
+                    //     }
+                    // }
                 }
             });
 
