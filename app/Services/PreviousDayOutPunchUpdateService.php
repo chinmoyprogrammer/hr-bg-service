@@ -267,6 +267,7 @@ class PreviousDayOutPunchUpdateService
             $deletedIncompleteOut = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
                 ->where('attendance_status', 11)
                 ->delete();
+            $this->dropIncompleteOutHalfAbsent($prevAttendance->id, $deletedIncompleteOut);
 
             Log::info('PreviousDayOutPunchUpdateService single-day: status 11 removed, status 13 inserted', [
                 'employee_user_id' => $row->employee_user_id,
@@ -403,6 +404,7 @@ class PreviousDayOutPunchUpdateService
             $deletedIncompleteOut = EmployeeAttendanceStatusLog::where('employee_attendance_id', $prevAttendance->id)
                 ->where('attendance_status', 11)
                 ->delete();
+            $this->dropIncompleteOutHalfAbsent($prevAttendance->id, $deletedIncompleteOut);
 
             Log::info('PreviousDayOutPunchUpdateService two-day: status 11 removed, status 12 inserted', [
                 'employee_user_id' => $row->employee_user_id,
@@ -652,5 +654,25 @@ class PreviousDayOutPunchUpdateService
         }
 
         return [$first, $last, $lastBeforeCutoff];
+    }
+
+    /**
+     * I/O (11) days also carry a 2nd-half absent (5) from AttendanceProcessingService.
+     * Once the checkout is found the day is complete, so that 5 goes with the 11.
+     * A 1st-half leave day (4) keeps its own 5 (half-day leave rules).
+     */
+    private function dropIncompleteOutHalfAbsent(int $attendanceId, int $deletedIncompleteOut): void
+    {
+        if ($deletedIncompleteOut < 1) {
+            return;
+        }
+        $hasFirstHalfLeave = EmployeeAttendanceStatusLog::where('employee_attendance_id', $attendanceId)
+            ->where('attendance_status', 4)
+            ->exists();
+        if (!$hasFirstHalfLeave) {
+            EmployeeAttendanceStatusLog::where('employee_attendance_id', $attendanceId)
+                ->where('attendance_status', 5)
+                ->delete();
+        }
     }
 }

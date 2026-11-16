@@ -273,6 +273,16 @@ class AttendanceProcessingService
             $this->applyBothHalfDayAbsentStatus(
                 $date, $shift, $first, $last, $statusesForLog
             );
+
+            // single punch on a working day: I/I (10) → 1st half absent (3), I/O (11) → 2nd half absent (5)
+            if (!$publicHoliday && !$empHoliday) {
+                if (in_array(10, $statusesForLog, true) && !in_array(3, $statusesForLog, true)) {
+                    $statusesForLog[] = 3;
+                }
+                if (in_array(11, $statusesForLog, true) && !in_array(5, $statusesForLog, true)) {
+                    $statusesForLog[] = 5;
+                }
+            }
         }
 
         // ── OT calculation ────
