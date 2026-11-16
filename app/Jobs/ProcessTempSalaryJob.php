@@ -246,14 +246,16 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
                 $payable_days = $total_present_days 
                                 - $unpaidLeaveDeduction
-                                // late is NOT cut from payable days; it is deducted once, as the late head (15) below
-                                // absent days are not in present days, so they are simply not paid -- no subtraction
+                                // absent days are not in any added term, so they are left out by themselves -- no subtraction
                                 - ($halfDayAbsentDays * 0.5)
                                 + ($halfLeaveNoPunch * 0.5)
                                 + $weekendDays
                                 + $holidayDays
                                 + $paidLeaveDays
+                                // late is cut here as days (deductable - considered), not as a late head (15)
+                                - $net_deductable_late_days
                                 ;
+                $payable_days = max($payable_days, 0);
                 // payable days can never exceed the days in the month
                 $payable_days = min($payable_days, (int) date('t', strtotime($payload['salary_calculate_month_year'])));
 
@@ -304,6 +306,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 
                 
                 
+                // late: cut from payable days (summary type 25), not deducted as head 15
+                /*
                 if ($net_deductable_late_days > 0) {
                     $deductable_late_minutes = $user->hasOfficialInformation->attendanceLogs?->where('attendance_status', 2)->sum(function ($log) {
                         if ($log->attendance?->shift_start_time && $log->in_time) {
@@ -380,6 +384,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         ];
                     }
                 }
+                */
 
                 //... calculate meal deductions
                 $total_meal_cost_this_month = 0;
@@ -419,6 +424,8 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 //.... send notification to every employee that his/her salary is processed
                 //deduction type -> 'loan','pr-done','absent-done','pf-done','meal-done','late-done','ait-done', 'ot'
 
+                //...... absent: left out of payable days, not shown / deducted in Others Deduction (head 16)
+                /*
                 //...... calculate absent deductions
                 
                 $absentDeduction = round($absentDays * $gross_salary_of_1_day); // whole taka, like PF // $basic_salary_of_1_day
@@ -449,12 +456,15 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
 
 
                 }
+                */
 
 
                 // calculate unpaid leave deduction 
                 //... salary_head = 19 = unpaid leave
 
 
+                // unpaid leave: cut from payable days (summary type 26 -> 25), not deducted as head 19
+                /*
                  $existedUnPaidDeductionRows = $user
                         ->hasOfficialInformation
                         ->hasPayrollPreSalarySheetDeductions?->
@@ -480,9 +490,7 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                         'created_at' => date('Y-m-d H:i:s'),
                     ];
                 }
-
-
-
+                */
 
 
                 // employee AIT calculaiton
@@ -637,14 +645,13 @@ class ProcessTempSalaryJob extends Job implements ShouldQueue
                 $head_amounts = $user->hasOfficialInformation->hasSalaryStructure?->where('is_earning', 1);
                 //Log::info('head_amounts', ['head_amounts' => $head_amounts]);
 
-                // new joiner: earn only the calendar days from joining_date to month end
-                // (no shift/weekend/holiday setup exists before joining, so those days are not absent)
+                // earn only the payable days: every earning head is prorated by payable_days / days in month,
+                // so total_earning (the sheet's Gross Payable) = gross / days * payable days. Absent, unpaid leave
+                // and late are cut there once. A new joiner has no logs before joining_date, so payable days
+                // already cover only the days since joining.
                 $monthStart = date('Y-m-01', strtotime($payload['salary_calculate_month_year']));
                 $daysInMonth = (int) date('t', strtotime($monthStart));
-                $joiningTs = strtotime((string) $user->hasOfficialInformation->joining_date);
-                $earnFactor = ($joiningTs && date('Y-m', $joiningTs) === date('Y-m', strtotime($monthStart)))
-                    ? ($daysInMonth - (int) date('j', $joiningTs) + 1) / $daysInMonth
-                    : 1;
+                $earnFactor = max(0, min(1, $payable_days / $daysInMonth));
 
                 // loop through each head
                 //.... insert salary to TempSalary
