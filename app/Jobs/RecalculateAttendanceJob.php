@@ -105,7 +105,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                 ->keyBy('date');
             $manualRowIdsUsed = []; // date => old attendance id, for re-linking manual_attendance_records
 
-            $attRecordIds = EmployeeAttendance::where('employee_user_id', $employeeUserId)->whereIn('date', $leaveDates )->whereRaw('is_corrected = 0 AND is_manual = 0')->pluck('id');
+            $attRecordIds = EmployeeAttendance::where('employee_user_id', $employeeUserId)->whereIn('date', $leaveDates )->whereRaw('is_corrected = 0 AND is_manual = 0 AND is_ods = 0')->pluck('id');
 
             if ($attRecordIds->isNotEmpty()) {
                 $totalLeaveAchieved = EmployeeLeaveAchieveLog::whereIn('employee_attendance_id', $attRecordIds)
