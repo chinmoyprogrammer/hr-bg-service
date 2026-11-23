@@ -118,7 +118,7 @@ class RecalculateAttendanceJob extends Job implements ShouldQueue
                 } */
                 foreach ($totalLeaveAchieved as $item) {
                     EmployeeLeaveBalance::where('id', $item->employee_leave_balance_id)
-                        ->decrement('current_balance', $item->leave_count);
+                        ->decrement('current_balance', $item->leave_count, ['achived_this_year' => DB::raw('achived_this_year - ' . (float) $item->leave_count)]); // undo the grant: both columns
                 }
 
                 EmployeeAttendanceStatusLog::whereIn('employee_attendance_id', $attRecordIds)->delete();

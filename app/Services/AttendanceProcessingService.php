@@ -820,35 +820,36 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
             ->where('duty_date', $date)
             ->isNotEmpty() ?? false;
 
-        if ($anyHoliday && $dutyOnDate->isEmpty() && !$hasApprovedRequisition ) {
+        // only this employee's own approved requisition authorizes the duty; another employee's
+        // requisition on the same date must not grant this one compensatory leave
+        if (!$hasApprovedRequisition) {
             $statusesForLog[] = 19; // Unauthorized
             return;
         }
 
-        $balanceStat = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
-            ->where('leave_head_id', 5)
-            ->where('fiscal_year', date('Y'))
-            ->first();
-
-        // Grant compensatory leave
+        // Grant compensatory leave: one day per duty day, in the duty date's fiscal year (not the processing year).
+        // A recalculation first takes back the deleted days' achieve logs (current_balance and achived_this_year),
+        // so adding 1 here never counts a day twice.
+        $fiscalYear = date('Y', strtotime($date));
         $employeeLeaveBalance = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
             ->where('leave_head_id', 5)
-            ->where('fiscal_year', date('Y'))->first();
+            ->where('fiscal_year', $fiscalYear)->first();
 
         if(!$employeeLeaveBalance){
-            EmployeeLeaveBalance::create([
+            // keep the new row: its id goes on the leave achieve log (NOT NULL) and gives status 18
+            $employeeLeaveBalance = EmployeeLeaveBalance::create([
                 'employee_user_id'=>$row->employee_user_id,
                 'leave_head_id'=>5,
                 'leave_policy_id'=>4,
-                'fiscal_year'=> date('Y'),
+                'fiscal_year'=> $fiscalYear,
                 'created_user_id'=> $this->systemUserId,
                 'achived_this_year'=>1,
                 'current_balance'=>1
             ]);
         }else{
-            $employeeLeaveBalance->achived_this_year = 1;
-            $employeeLeaveBalance->current_balance = 1;
-            $employeeLeaveBalance->save();
+            $employeeLeaveBalance->increment('achived_this_year', 1, [
+                'current_balance' => DB::raw('current_balance + 1'),
+            ]);
         }
 
         $balanceStat = $employeeLeaveBalance;
