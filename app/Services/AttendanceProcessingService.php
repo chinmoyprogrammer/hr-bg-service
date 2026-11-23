@@ -279,7 +279,12 @@ class AttendanceProcessingService
                 if (in_array(10, $statusesForLog, true) && !in_array(3, $statusesForLog, true)) {
                     $statusesForLog[] = 3;
                 }
-                if (in_array(11, $statusesForLog, true) && !in_array(5, $statusesForLog, true)) {
+                // while today's shift is still running the employee may punch out yet, so I/O shows alone;
+                // the 2nd-half absent comes on the first run after shift end (a past date always gets it,
+                // since yesterday is reprocessed only once, just after midnight)
+                $shiftEndAt = strtotime($date . ' ' . $shiftEnd . (!empty($shift->is_overnight) ? ' +1 day' : ''));
+                $shiftOver  = $date < date('Y-m-d', strtotime($now)) || strtotime($now) >= $shiftEndAt;
+                if ($shiftOver && in_array(11, $statusesForLog, true) && !in_array(5, $statusesForLog, true)) {
                     $statusesForLog[] = 5;
                 }
             }
