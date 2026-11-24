@@ -11,6 +11,12 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 
 class EmployeeDeactivation extends Job implements ShouldQueue
 {
+    use OldErpApi;
+
+    private const RESOURCE    = 'apiResign';
+    private const LOG_CHANNEL = 'old_erp_resign_sync';
+    private $subject = '';
+
     protected array $payload;
     /**
      * Create a new job instance.
@@ -34,6 +40,9 @@ class EmployeeDeactivation extends Job implements ShouldQueue
         try {
             // Get today's date
             $deactivateDate = $this->payload['date'] ?? null;
+
+            // old ERP first: a ZKBio failure below must not hold it
+            $this->approveInOldErp($deactivateDate);
 
             // 1. Retrieve approved SeparationApplication matching effective_date
             $applications = SeparationApplication::where('status', 'Approved')
@@ -72,20 +81,20 @@ class EmployeeDeactivation extends Job implements ShouldQueue
 
             foreach ($applications as $application) {
                 // 2. Update user with status 0
-                $employeeUser = User::find($application->employee_id);
+                $employeeUser = User::find($application->employee_user_id);
                 $emp_code = '';
                 if ($employeeUser) {
                     $employeeUser->status = 0;
                     $employeeUser->save();
                     $emp_code = $employeeUser->username;
-                    Log::info("EmployeeDeactivation: User status updated to 0 for employee_id: {$application->employee_id}");
+                    Log::info("EmployeeDeactivation: User status updated to 0 for employee_id: {$application->employee_user_id}");
                 } else {
-                    Log::warning("EmployeeDeactivation: User not found for employee_id: {$application->employee_id}");
+                    Log::warning("EmployeeDeactivation: User not found for employee_id: {$application->employee_user_id}");
                 }
 
                 if ($emp_code === '') {
                     Log::warning('EmployeeDeactivation: emp_code missing for application user; cannot resolve device employee_id.', [
-                        'employee_id' => $application->employee_id,
+                        'employee_id' => $application->employee_user_id,
                     ]);
                     continue;
                 }
@@ -93,7 +102,7 @@ class EmployeeDeactivation extends Job implements ShouldQueue
                 $deviceEmployeeId = $this->resolveDeviceEmployeeId($emp_code, $token);
                 if ($deviceEmployeeId === null) {
                     Log::warning('EmployeeDeactivation: Device employee_id not found for emp_code.', [
-                        'employee_id' => $application->employee_id,
+                        'employee_id' => $application->employee_user_id,
                         'emp_code' => $emp_code,
                     ]);
                     continue;
@@ -118,12 +127,12 @@ class EmployeeDeactivation extends Job implements ShouldQueue
                     ->post($resign_api_url, $payload);
 
                 if ($resignResponse->successful()) {
-                    Log::info("EmployeeDeactivation: Successfully deactivated employee in ZKBio.", ['employee_id' => $application->employee_id, 'response' => $resignResponse->body()]);
+                    Log::info("EmployeeDeactivation: Successfully deactivated employee in ZKBio.", ['employee_id' => $application->employee_user_id, 'response' => $resignResponse->body()]);
                     // Mark as updated
                     $application->employee_status_updated = 1;
                     $application->save();
                 } else {
-                    Log::error("EmployeeDeactivation: Failed to deactivate employee in ZKBio.", ['employee_id' => $application->employee_id, 'response' => '']);
+                    Log::error("EmployeeDeactivation: Failed to deactivate employee in ZKBio.", ['employee_id' => $application->employee_user_id, 'response' => '']);
                 }
             }
 
@@ -134,6 +143,41 @@ class EmployeeDeactivation extends Job implements ShouldQueue
         }
     }
     
+    /**
+     * Approve in the old ERP (/apiResign/approve) the resignations hr-admin created there as pending at final
+     * approval (old_erp_resign_synced = 0), once the effective date is reached. Actor = the final HR approver
+     * (updated_user_id at approval). A failure is logged and retried on the next run.
+     */
+    private function approveInOldErp(?string $date): void
+    {
+        if (!$date || $this->syncDisabled()) {
+            return;
+        }
+        $rows = SeparationApplication::where('status', 'Approved')
+            ->where('old_erp_resign_synced', 0)
+            ->whereNotNull('old_erp_resign_id')
+            ->where('effective_date', '<=', $date)
+            ->get();
+
+        foreach ($rows as $row) {
+            $this->subject = "separation {$row->id}";
+            try {
+                $ok = $this->post('approve', ['id' => $row->old_erp_resign_id], ['action_by_emp_id' => (int) ($row->updated_user_id ?? $row->created_user_id)]) !== null
+                    || ($this->get(['id' => $row->old_erp_resign_id])['status'] ?? null) === 'approved'; // already approved there
+                if ($ok) {
+                    SeparationApplication::where('id', $row->id)->update(['old_erp_resign_synced' => 1]);
+                }
+            } catch (\Throwable $e) {
+                $this->log('error', 'approve failed, retry next run', ['error' => $e->getMessage()]);
+            }
+        }
+    }
+
+    private function logSubject(): string
+    {
+        return $this->subject;
+    }
+
     /**
      * Resolves the internal employee ID used by the ZKBio access control system by querying the device's employee API.
      * 

@@ -41,6 +41,14 @@ return [
             'days' => 90,
         ],
 
+        // EmployeeDeactivation old ERP resign approve: storage/logs/old-erp-resign-sync-YYYY-MM-DD.log
+        'old_erp_resign_sync' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/old-erp-resign-sync.log'),
+            'level' => 'debug',
+            'days' => 90,
+        ],
+
         // OldErpAttendanceSyncJob: storage/logs/old-erp-attendance-sync-YYYY-MM-DD.log
         'old_erp_attendance_sync' => [
             'driver' => 'daily',
