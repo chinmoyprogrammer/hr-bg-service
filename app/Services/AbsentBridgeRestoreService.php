@@ -101,7 +101,7 @@ class AbsentBridgeRestoreService
     /**
      * @param Collection $bridgedHolidays result of collect(), keyed by date
      */
-    public function restore(int $employeeUserId, Collection $bridgedHolidays): void
+    public function restore(int $employeeUserId, Collection $bridgedHolidays, bool $rerunJob = true): void
     {
         if ($bridgedHolidays->isEmpty()) {
             return;
@@ -151,6 +151,10 @@ class AbsentBridgeRestoreService
         }
 
         // Re-merge whatever is still sandwiched by the remaining absences.
+        // Skipped when the job itself is the caller (it already decided).
+        if (!$rerunJob) {
+            return;
+        }
         $months = collect($dates)
             ->map(fn ($d) => Carbon::parse($d)->format('Y-m'))
             ->unique();
