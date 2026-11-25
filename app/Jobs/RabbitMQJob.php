@@ -60,6 +60,10 @@ class RabbitMQJob extends Job implements ShouldQueue
             (new OldErpHolidaySyncJob(is_array($this->data) ? $this->data : []))->handle();
             return;
         }
+        if ($this->queueName === 'oldErpSalarySetupSync_queue') {
+            (new OldErpSalarySetupSyncJob(is_array($this->data) ? $this->data : []))->handle();
+            return;
+        }
         if ($this->queueName === 'oldErpAttendanceSync_queue') {
             (new OldErpAttendanceSyncJob(is_array($this->data) ? $this->data : []))->handle();
             return;
