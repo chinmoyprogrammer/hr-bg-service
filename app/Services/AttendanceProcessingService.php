@@ -836,16 +836,22 @@ Log::warning('resolveFirstLastPunch 8 :', [$first , $last]);
         // A recalculation first takes back the deleted days' achieve logs (current_balance and achived_this_year),
         // so adding 1 here never counts a day twice.
         $fiscalYear = date('Y', strtotime($date));
+        // same row the leave apply looks up (LeaveController::findLeaveBalance): the employee's current policy,
+        // not deleted. A hard-coded policy 4 here gave "Leave balance not found" on CPL apply.
         $employeeLeaveBalance = EmployeeLeaveBalance::where('employee_user_id', $row->employee_user_id)
             ->where('leave_head_id', 5)
-            ->where('fiscal_year', $fiscalYear)->first();
+            ->where('leave_policy_id', $row->leave_policy_id)
+            ->where('fiscal_year', $fiscalYear)
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->first();
 
         if(!$employeeLeaveBalance){
             // keep the new row: its id goes on the leave achieve log (NOT NULL) and gives status 18
             $employeeLeaveBalance = EmployeeLeaveBalance::create([
                 'employee_user_id'=>$row->employee_user_id,
                 'leave_head_id'=>5,
-                'leave_policy_id'=>4,
+                'leave_policy_id'=>$row->leave_policy_id,
                 'fiscal_year'=> $fiscalYear,
                 'created_user_id'=> $this->systemUserId,
                 'achived_this_year'=>1,
