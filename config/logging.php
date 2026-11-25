@@ -57,6 +57,14 @@ return [
             'days' => 90,
         ],
 
+        // OldErpSalarySetupSyncJob: storage/logs/old-erp-salary-setup-sync-YYYY-MM-DD.log
+        'old_erp_salary_setup_sync' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/old-erp-salary-setup-sync.log'),
+            'level' => 'debug',
+            'days' => 90,
+        ],
+
         'stderr' => [
             'driver' => 'monolog',
             'handler' => Monolog\Handler\StreamHandler::class,

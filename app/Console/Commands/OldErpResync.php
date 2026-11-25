@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Jobs\OldErpAttendanceSyncJob;
 use App\Jobs\OldErpLateConsiderSyncJob;
 use App\Jobs\OldErpLoanSyncJob;
+use App\Jobs\OldErpSalarySetupSyncJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -50,6 +51,17 @@ class OldErpResync extends Command
             ->get()
             ->unique(fn ($r) => $r->employee_user_id . '|' . $r->date);
 
+        // salary setup: increments whose effective month came in the window (future ones wait for their day)
+        $increments = DB::table('increment_promotion_history as h')
+            ->join('increment_promotion_records as r', 'r.id', '=', 'h.record_id')
+            ->where('r.status', 'approved')->whereNull('r.deleted_at')
+            ->where('h.effective_month', '<=', date('Y-m-d'))
+            // effective lately, or approved lately with an earlier effective month (sent at approval; caught here if lost)
+            ->where(fn ($q) => $q->where('h.effective_month', '>=', substr($since, 0, 10))->orWhere('h.created_at', '>=', $since))
+            ->orderBy('h.id')
+            ->get(['h.id', 'h.employee_user_id'])
+            ->unique('employee_user_id');   // the job sends the current gross, once per employee is enough
+
         $failed = 0;
         foreach ($loanIds as $id) {
             $failed += $this->syncOne(fn () => (new OldErpLoanSyncJob(['loan_id' => $id]))->handle(), "loan {$id}");
@@ -63,8 +75,13 @@ class OldErpResync extends Command
                 "attendance {$r->employee_user_id} {$r->date}");
         }
 
+        foreach ($increments as $h) {
+            $failed += $this->syncOne(fn () => (new OldErpSalarySetupSyncJob(['employee_user_id' => $h->employee_user_id, 'increment_history_id' => $h->id]))->handle(),
+                "salary setup {$h->employee_user_id}");
+        }
+
         $this->info('old-erp:resync ' . count($loanIds) . ' loans, ' . count($lateIds) . ' late consider, ' . count($attendance)
-            . " attendance, {$failed} failed (see the sync logs)");
+            . ' attendance, ' . count($increments) . " salary setups, {$failed} failed (see the sync logs)");
         return $failed ? 1 : 0;
     }
 
