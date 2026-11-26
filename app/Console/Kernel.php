@@ -2,6 +2,7 @@
 
 namespace App\Console;
 
+use App\Console\Commands\ConsumeAuditLog;
 use App\Console\Commands\ConsumeTriggerQueues;
 use App\Console\Commands\JobsLimits;
 use App\Console\Commands\JobsWatchdog;
@@ -18,6 +19,7 @@ class Kernel extends ConsoleKernel
      */
     protected $commands = [
         ConsumeTriggerQueues::class,
+        ConsumeAuditLog::class,
         JobsLimits::class,
         JobsWatchdog::class,
         OldErpResync::class,
