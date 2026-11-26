@@ -174,17 +174,29 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
 
         Log::debug("Processing employee {$employeeUserId} for sandwiched holidays");
 
-        // Holidays (all types, including weekends) for this employee across the buffer window.
-        $holidays = Holiday::whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+        // Holidays (all types, including weekends) for this employee across the
+        // buffer window - including rows this job soft-deleted earlier
+        // ("bridged"), so the chain walk sees the real calendar and a merge
+        // that no longer holds (e.g. a holiday added next to it afterwards)
+        // can be undone below.
+        $rows = Holiday::withoutGlobalScope('not_deleted')
+            ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
             ->where('status', 'Active')
             ->where('employee_user_id', $employeeUserId)
+            ->where(function ($q) {
+                $q->where(function ($q) {
+                    $q->whereNull('deleted_at')->whereNull('deleted_by');
+                })->orWhere('deleted_by', $this->systemUserId);
+            })
             ->orderBy('date')
-            ->get()
-            ->keyBy('date');
+            ->get();
 
-        if ($holidays->isEmpty()) {
+        if ($rows->isEmpty()) {
             return;
         }
+
+        $holidays = $rows->keyBy('date');
+        $bridged = $rows->filter(fn ($h) => $h->deleted_by !== null)->groupBy('date');
         Log::info('holidays raw: ', ['holidays' => $holidays]);
 
         $attendance = EmployeeAttendance::with('employeeAttendanceStatusLog')
@@ -210,11 +222,48 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
                 continue;
             }
 
-            $this->processHolidaySandwich($employee, $holiday, $holidays, $attendance, $resolvedDates);
+            $this->processHolidaySandwich($employee, $holiday, $holidays, $attendance, $resolvedDates, $bridged);
         }
 
         // Rule 2: full work-week absent -> trailing weekend block absent.
-        $this->processFullWeekAbsentWeekends($employee, $holidays, $attendance, $monthStart, $monthEnd, $resolvedDates);
+        $this->processFullWeekAbsentWeekends($employee, $holidays, $attendance, $monthStart, $monthEnd, $resolvedDates, $bridged);
+
+        $this->restoreStaleMerges($employee, $bridged, $attendance, $monthStart, $monthEnd, $resolvedDates);
+    }
+
+    /**
+     * A bridged date that neither rule confirmed this run is no longer
+     * sandwiched (a holiday was added beside it, an absence was corrected,
+     * ...), so bring its holiday back and rebuild it as Weekend/Holiday.
+     */
+    private function restoreStaleMerges(
+        EmployeeOfficialInformation $employee,
+        \Illuminate\Support\Collection $bridged,
+        \Illuminate\Support\Collection $attendance,
+        Carbon $monthStart,
+        Carbon $monthEnd,
+        array $resolvedDates
+    ): void {
+        $stale = $bridged->filter(function ($rows, $dateStr) use ($monthStart, $monthEnd, $resolvedDates, $attendance, $employee) {
+            $date = Carbon::parse($dateStr);
+            if ($date->lt($monthStart) || $date->gt($monthEnd) || $this->isOnOrAfterCutoff($dateStr) || isset($resolvedDates[$dateStr])) {
+                return false;
+            }
+            // ponytail: restore() rebuilds with no punches, so a day with weekend-duty
+            // punches is left for a manual recalc instead of losing them.
+            if ($this->wasPresent($dateStr, $attendance)) {
+                Log::warning("Bridged {$dateStr} for employee {$employee->employee_user_id} is Present, not restoring");
+                return false;
+            }
+            return true;
+        });
+
+        if ($stale->isEmpty()) {
+            return;
+        }
+
+        Log::info("Restoring merges that no longer hold for employee {$employee->employee_user_id}", ['dates' => $stale->keys()->all()]);
+        app(\App\Services\AbsentBridgeRestoreService::class)->restore($employee->employee_user_id, $stale, false);
     }
 
     /**
@@ -227,7 +276,8 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         Holiday $holiday,
         \Illuminate\Support\Collection $holidays,
         \Illuminate\Support\Collection $attendance,
-        array &$resolvedDates
+        array &$resolvedDates,
+        \Illuminate\Support\Collection $bridged
     ): void {
         $employeeUserId = $employee->employee_user_id;
         $holidayDate = Carbon::parse($holiday->date);
@@ -236,6 +286,11 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         $nextAbsent = $this->isNearestNonHolidayDayAbsent($holidayDate, 1, $holidays, $attendance);
 
         if (!($previousAbsent && $nextAbsent)) {
+            return;
+        }
+
+        if ($bridged->has($holiday->date)) {
+            $resolvedDates[$holiday->date] = true; // already merged, still holds
             return;
         }
 
@@ -290,7 +345,8 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
         \Illuminate\Support\Collection $attendance,
         Carbon $monthStart,
         Carbon $monthEnd,
-        array &$resolvedDates
+        array &$resolvedDates,
+        \Illuminate\Support\Collection $bridged
     ): void {
         Log::info("Processing full-week absent weekend rule for ");
         $employeeUserId = $employee->employee_user_id;
@@ -350,6 +406,10 @@ class ProcessSandwichedHolidaysJob extends Job implements ShouldQueue
 
             foreach ($block as $dateStr) {
                 if (isset($resolvedDates[$dateStr])) {
+                    continue;
+                }
+                if ($bridged->has($dateStr)) {
+                    $resolvedDates[$dateStr] = true; // already merged, still holds
                     continue;
                 }
                 if ($this->wasPresent($dateStr, $attendance)) {
