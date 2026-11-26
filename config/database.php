@@ -29,6 +29,13 @@ return [
         // Same DB, own PDO: a job's DB::rollBack() can't undo its job_runs row
         'tracking' => $mysql,
 
+        // Gateway audit log (separate schema on the same server). Consumer only needs INSERT.
+        'audit' => array_merge($mysql, [
+            'database' => env('AUDIT_DB_DATABASE', 'mbw_audit'),
+            'username' => env('AUDIT_DB_USERNAME', env('DB_USERNAME', 'forge')),
+            'password' => env('AUDIT_DB_PASSWORD', env('DB_PASSWORD', '')),
+        ]),
+
     ],
 
     'migrations' => 'migrations',

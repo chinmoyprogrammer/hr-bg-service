@@ -60,6 +60,20 @@ if [ "$OLD_ERP_SYNC_ENABLED" = "1" ] || [ "$OLD_ERP_SYNC_ENABLED" = "true" ]; th
   ) &
 fi
 
+# Gateway audit log consumer (audit.requests -> mbw_audit.api_audit_logs), own loop so it never waits on jobs
+AUDIT_ENABLED="${HR_BG_AUDIT_ENABLED:-1}"
+if [ "$AUDIT_ENABLED" = "1" ] || [ "$AUDIT_ENABLED" = "true" ]; then
+  (
+    while true; do
+      set +e
+      php -d opcache.enable_cli=0 artisan audit:consume --no-interaction
+      set -e
+      echo "[audit] exited; restarting in 5s..."
+      sleep 5
+    done
+  ) &
+fi
+
 # Job tracking watchdog: missed schedules, dead/overrunning runs, stuck queues, silent heartbeats
 WATCHDOG_ENABLED="${HR_BG_WATCHDOG_ENABLED:-1}"
 if [ "$WATCHDOG_ENABLED" = "1" ] || [ "$WATCHDOG_ENABLED" = "true" ]; then
